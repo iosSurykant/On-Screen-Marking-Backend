@@ -1,0 +1,23 @@
+{
+  "marks": [
+    {
+      "_id": "69affe69bc654b8af19f665f",
+      "schemaId": "69affe02bc654b8af19f6583",
+      "parentQuestionId": null,
+      "questionsName": "2",
+      "maxMarks": 10,
+      "minMarks": 0,
+      "isSubQuestion": false,
+      "bonusMarks": 0,
+      "marksDifference": 1,
+      "numberOfSubQuestions": 0,
+      "compulsorySubQuestions": 0,
+      "allottedMarks": 10,
+      "answerPdfId": "69afffe0bc654b8af19f67ed",
+      "timerStamps": "",
+      "isMarked": true,
+      "updatedAt": "2026-03-10T11:31:00.121Z"
+    }
+  ],
+  "lastSaved": "2026-03-10T11:31:00.122Z"
+}
