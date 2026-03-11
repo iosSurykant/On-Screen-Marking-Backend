@@ -2622,291 +2622,362 @@ const getUserCurrentTaskStatus = async (req, res) => {
   }
 };
 
+const updateSubjectFolderStats = async ({
+  subjectCode,
+  TaskModel,
+  PdfModel,
+  isBooklet,
+  allPdfs,
+  session,
+}) => {
+
+  const taskIds = await TaskModel.find({ subjectCode })
+    .distinct("_id")
+    .session(session);
+
+  /* ---------------- DISTINCT BOOKLET COUNTS ---------------- */
+
+  const allocatedBooklets = (
+    await PdfModel.distinct("answerPdfName", {
+      ...(isBooklet
+        ? { bookletTaskId: { $in: taskIds } }
+        : { taskId: { $in: taskIds } }),
+    }).session(session)
+  ).length;
+
+  const pendingBooklets = (
+    await PdfModel.distinct("answerPdfName", {
+      ...(isBooklet
+        ? { bookletTaskId: { $in: taskIds } }
+        : { taskId: { $in: taskIds } }),
+      status: "false",
+    }).session(session)
+  ).length;
+
+  const evaluatedBooklets = (
+    await PdfModel.distinct("answerPdfName", {
+      ...(isBooklet
+        ? { bookletTaskId: { $in: taskIds } }
+        : { taskId: { $in: taskIds } }),
+      status: "true",
+    }).session(session)
+  ).length;
+
+  const unAllocated = Math.max(0, allPdfs.length - allocatedBooklets);
+
+  await SubjectFolderModel.findOneAndUpdate(
+    { folderName: subjectCode },
+    {
+      $set: {
+        allocated: allocatedBooklets,
+        evaluation_pending: pendingBooklets,
+        evaluated: evaluatedBooklets,
+        unAllocated,
+        updatedAt: new Date(),
+      },
+    },
+    { session }
+  );
+};
+
 const autoAssigning = async (req, res) => {
-  const { subjectCode } = req.body;
+
+  const { subjectCode, taskType = "question", questiondefinitionId } = req.body;
+
   const session = await mongoose.startSession();
 
   try {
+
     session.startTransaction();
+
+    const isBooklet = taskType === "booklet";
+
+    const TaskModel = isBooklet ? BookletTask : Task;
+    const PdfModel = isBooklet ? BookletAnswerPdf : AnswerPdf;
+
+    /* -------------------------------------------------- */
+    /* 1️⃣ SUBJECT VALIDATION */
+    /* -------------------------------------------------- */
 
     const subject = await Subject.findOne({ code: subjectCode });
 
     if (!subject) {
-      console.error(`Subject ${subjectCode} not found.`);
       await session.abortTransaction();
-      session.endSession();
-
       return res.status(404).json({
         success: false,
-        message: `Subject ${subjectCode} not found.`,
+        message: `Subject ${subjectCode} not found`,
       });
     }
 
-    const users = await User.find({ subjectCode: subject._id });
+    /* -------------------------------------------------- */
+    /* 2️⃣ FETCH USERS */
+    /* -------------------------------------------------- */
 
-    if (users.length === 0) {
-      console.warn(`No users found for subject ${subjectCode}.`);
+    const users = await User.find({ subjectCode: subject._id }).lean();
+
+    if (!users.length) {
       await session.abortTransaction();
-      session.endSession();
       return res.status(404).json({
         success: false,
-        message: `No users available for subject ${subjectCode}.`,
+        message: "No evaluators available",
       });
     }
+
+    /* -------------------------------------------------- */
+    /* 3️⃣ READ PDFs FROM FOLDER */
+    /* -------------------------------------------------- */
 
     const processedFolderPath = path.join(
       __dirname,
       "processedFolder",
-      subjectCode,
+      subjectCode
     );
 
     if (!fs.existsSync(processedFolderPath)) {
-      console.error(`Folder for subject ${subjectCode} not found.`);
       await session.abortTransaction();
-      session.endSession();
-
       return res.status(404).json({
         success: false,
-        message: `Processed folder not found for subject ${subjectCode}.`,
+        message: "Processed folder not found",
       });
     }
 
-    // ALL PDFs in subject folder
     const allPdfs = fs
       .readdirSync(processedFolderPath)
-      .filter((file) => file.endsWith(".pdf"));
+      .filter((f) => f.endsWith(".pdf"))
+      .sort();
 
-    if (allPdfs.length === 0) {
-      console.log(`No PDFs found for subject ${subjectCode}.`);
+    if (!allPdfs.length) {
       await session.abortTransaction();
+      return res.status(200).json({
+        success: true,
+        message: "No PDFs found",
+      });
+    }
+
+    /* -------------------------------------------------- */
+    /* 4️⃣ FIND ALREADY ASSIGNED BOOKLETS */
+    /* -------------------------------------------------- */
+
+    const assignedPdfs = await PdfModel.distinct("answerPdfName");
+
+    const unallocatedPdfs = allPdfs.filter(
+      (pdf) => !assignedPdfs.includes(pdf)
+    );
+
+    if (!unallocatedPdfs.length) {
+
+      await updateSubjectFolderStats({
+        subjectCode,
+        TaskModel,
+        PdfModel,
+        isBooklet,
+        allPdfs,
+        session,
+      });
+
+      await session.commitTransaction();
       session.endSession();
 
       return res.status(200).json({
         success: true,
-        message: `No PDFs available for auto assignment.`,
-        assigned: 0,
+        message: "No unallocated PDFs available",
       });
     }
 
-    let unallocatedPdfs = (
-      await SubjectFolderModel.findOne(
-        { folderName: subjectCode },
-        { unAllocated: 1, _id: 0 },
-      ).lean()
-    )?.unAllocated;
+    /* -------------------------------------------------- */
+    /* 5️⃣ BUILD USER CAPACITY */
+    /* -------------------------------------------------- */
 
-    console.log("unallocated-pdfs", unallocatedPdfs);
+    const userCapacity = [];
 
-    // 2. FIRST TIME running → treat all PDFs as unallocated
-    if (unallocatedPdfs === undefined) {
-      unallocatedPdfs = allPdfs.length;
+    for (const user of users) {
+
+      const tasks = await TaskModel.find({
+        userId: user._id,
+      })
+        .select("_id")
+        .lean();
+
+      const taskIds = tasks.map((t) => t._id);
+
+      let pending = 0;
+
+      if (taskIds.length) {
+
+        pending = (
+          await PdfModel.distinct("answerPdfName", {
+            ...(isBooklet
+              ? { bookletTaskId: { $in: taskIds } }
+              : { taskId: { $in: taskIds } }),
+            status: { $ne: "true" },
+          })
+        ).length;
+      }
+
+      const capacity = Math.max(0, (user.maxBooklets || 0) - pending);
+
+      userCapacity.push({
+        userId: user._id,
+        capacity,
+      });
     }
 
-    console.log("previousUnallocated →", unallocatedPdfs);
+    /* -------------------------------------------------- */
+    /* 6️⃣ FILTER USERS WITH CAPACITY */
+    /* -------------------------------------------------- */
 
-    // 3. Extract only remaining unallocated PDFs
-    let newPdfs;
+    const availableUsers = userCapacity.filter((u) => u.capacity > 0);
 
-    if (unallocatedPdfs > 0) {
-      // only take remaining PDFs
-      newPdfs = allPdfs.slice(-unallocatedPdfs);
-    } else {
-      // unallocatedPdfs === 0
-      newPdfs = [];
+    if (!availableUsers.length) {
+
+      await updateSubjectFolderStats({
+        subjectCode,
+        TaskModel,
+        PdfModel,
+        isBooklet,
+        allPdfs,
+        session,
+      });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      return res.status(200).json({
+        success: true,
+        message: "All evaluators have reached their max booklet quota",
+      });
     }
 
-    console.log("PDFs to be assigned now:", newPdfs);
+    /* -------------------------------------------------- */
+    /* 7️⃣ PRELOAD TASKS */
+    /* -------------------------------------------------- */
 
-    const numUsers = users.length;
-    let assignmentIndex = 0;
-    let totalAssigned = 0;
+    const taskMap = {};
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    for (const user of availableUsers) {
 
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+      let task;
 
-    console.log("new-pdf", newPdfs.length);
-
-    console.log("all-pdfs", allPdfs.length);
-
-    // ⭐ MAIN ASSIGNMENT LOOP ⭐
-    for (const pdfFile of newPdfs) {
-      let assigned = false;
-
-      // Try to assign this PDF to someone
-      for (let u = 0; u < numUsers; u++) {
-        const user = users[assignmentIndex % numUsers];
-
-        // Count how many PDFs assigned to THIS user already
-        // const userAssignedCount = await AnswerPdf.countDocuments({
-        //   taskId: {
-        //     $in: await Task.find({
-        //       userId: user._id,
-        //       subjectCode,
-        //     }).distinct("_id"),
-        //   },
-        // }).session(session);
-
-        const taskIds = await Task.find({
-          userId: user._id,
-        })
-          .distinct("_id")
-          .session(session);
-
-        const todayPending = await AnswerPdf.countDocuments({
-          taskId: { $in: taskIds },
-          status: "false",
-          assignedDate: { $gte: startOfDay, $lte: endOfDay },
-        }).session(session);
-
-        const dailyLimit = user.maxBooklets || 0;
-        const availableToday = Math.max(0, dailyLimit - todayPending);
-
-        // FETCH existing task for this user
-        let task = await Task.findOne({
-          userId: user._id,
+      if (isBooklet) {
+        task = await BookletTask.findOne({
+          userId: user.userId,
           subjectCode,
         }).session(session);
+      } else {
+        task = await Task.findOne({
+          userId: user.userId,
+          subjectCode,
+          questiondefinitionId,
+        }).session(session);
+      }
 
-        // If NO existing task → create one
-        if (!task) {
-          task = new Task({
-            subjectCode,
-            userId: user._id,
-            totalBooklets: 0,
-            status: "inactive",
-            currentFileIndex: 1,
-          });
+      if (!task) {
 
-          await task.save({ session });
-        } else {
-          // 🔁 Re-assignment case
-          if (task.status === "success") {
-            task.status = "inactive";
-            await task.save({ session });
-          }
-        }
+        task = new TaskModel({
+          subjectCode,
+          userId: user.userId,
+          questiondefinitionId: isBooklet ? undefined : questiondefinitionId,
+          totalBooklets: 0,
+          status: "inactive",
+          currentFileIndex: 1,
+        });
 
-        if (availableToday <= 0) {
-          assignmentIndex++;
+        await task.save({ session });
+      }
+
+      taskMap[user.userId.toString()] = task;
+    }
+
+    /* -------------------------------------------------- */
+    /* 8️⃣ ROUND ROBIN FIFO ASSIGNMENT */
+    /* -------------------------------------------------- */
+
+    let totalAssigned = 0;
+    let userIndex = 0;
+
+    for (const pdf of unallocatedPdfs) {
+
+      let assigned = false;
+
+      for (let i = 0; i < availableUsers.length; i++) {
+
+        const user = availableUsers[userIndex % availableUsers.length];
+
+        if (user.capacity <= 0) {
+          userIndex++;
           continue;
         }
 
-        // SAVE this booklet under task
-        await new AnswerPdf({
-          taskId: task._id,
-          answerPdfName: pdfFile,
+        const task = taskMap[user.userId.toString()];
+
+        const pdfDoc = {
+          answerPdfName: pdf,
           status: "false",
           assignedDate: new Date(),
-        }).save({ session });
+        };
 
-        // Increase task booklet count
+        if (isBooklet) {
+          pdfDoc.bookletTaskId = task._id;
+        } else {
+          pdfDoc.taskId = task._id;
+          pdfDoc.questiondefinitionId = questiondefinitionId;
+        }
+
+        await PdfModel.create([pdfDoc], { session });
+
         task.totalBooklets += 1;
         await task.save({ session });
 
-        assignmentIndex++;
+        user.capacity--;
         totalAssigned++;
-        assigned = true;
-        break; // stop looping user list for this PDF
-      }
 
-      // If NOT assigned to anyone → stop entirely
-      if (!assigned) {
-        console.log("⚠ No user has remaining capacity.");
+        assigned = true;
+        userIndex++;
         break;
       }
+
+      if (!assigned) break;
     }
 
-    // -------- SUBJECT FOLDER MODEL UPDATE --------
-    const allTaskIds = await Task.find({ subjectCode })
-      .distinct("_id")
-      .session(session);
+    /* -------------------------------------------------- */
+    /* 9️⃣ UPDATE SUBJECT FOLDER STATS */
+    /* -------------------------------------------------- */
 
-    const evaluationPending = await AnswerPdf.countDocuments({
-      status: "false",
-      taskId: { $in: allTaskIds },
-    }).session(session);
+    await updateSubjectFolderStats({
+      subjectCode,
+      TaskModel,
+      PdfModel,
+      isBooklet,
+      allPdfs,
+      session,
+    });
 
-    console.log("evaluationPending", evaluationPending);
-
-    const evaluated = await AnswerPdf.countDocuments({
-      status: "true",
-      taskId: { $in: allTaskIds },
-    }).session(session);
-
-    console.log("evaluated", evaluated);
-
-    // total PDFs in folder - total assigned = unallocated
-
-    //this will check subjectFolderModel for currently unallocated count and allocated count and evaluation pending count and evaluated count
-    const previousUnallocated =
-      (
-        await SubjectFolderModel.findOne(
-          { folderName: subjectCode },
-          { unAllocated: 1, _id: 0 },
-        ).lean()
-      )?.unAllocated ?? 0;
-    console.log("previousUnallocated", previousUnallocated);
-
-    let unAllocated = 0;
-
-    if (previousUnallocated === 0) {
-      unAllocated = newPdfs.length - totalAssigned;
-    } else {
-      unAllocated = previousUnallocated - totalAssigned;
-    }
-
-    const previouslyAllocated =
-      (
-        await SubjectFolderModel.findOne(
-          { folderName: subjectCode },
-          { allocated: 1, _id: 0 },
-        ).lean()
-      )?.allocated ?? 0;
-    console.log("previouslyAllocated", previouslyAllocated);
-
-    let allocated = 0;
-    if (previouslyAllocated === 0) {
-      allocated = totalAssigned;
-    } else {
-      allocated = previouslyAllocated + totalAssigned;
-    }
-
-    await SubjectFolderModel.findOneAndUpdate(
-      { folderName: subjectCode },
-      {
-        $set: {
-          allocated: allocated,
-          evaluation_pending: evaluationPending,
-          evaluated: evaluated,
-          unAllocated: unAllocated,
-        },
-        updatedAt: new Date(),
-      },
-      { session },
-    );
+    /* -------------------------------------------------- */
+    /* 🔟 COMMIT */
+    /* -------------------------------------------------- */
 
     await session.commitTransaction();
     session.endSession();
 
-    console.log(
-      `Auto-assigned ${totalAssigned} booklets for subject ${subjectCode}.`,
-    );
-    res.status(200).json({
-      message: `Auto-assigned ${totalAssigned} booklets for subject ${subjectCode}.`,
+    return res.status(200).json({
+      success: true,
+      message: `${totalAssigned} booklets auto assigned`,
+      assigned: totalAssigned,
     });
+
   } catch (error) {
-    console.error("Error during auto-assignment:", error);
+
+    console.error("Auto assignment error:", error);
+
     await session.abortTransaction();
     session.endSession();
-    res
-      .status(500)
-      .json({ error: "An error occurred during auto-assignment." });
+
+    return res.status(500).json({
+      success: false,
+      message: "Auto assignment failed",
+    });
   }
 };
-
 //In taskControllers.js Add this Function
 
 const getReviewerTask = async (req, res) => {
