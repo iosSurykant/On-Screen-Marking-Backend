@@ -29,6 +29,7 @@ import {
     reviewerRejectTask,
     assignBookletWiseTask,
     getDataprincipalSide,
+    assignHeadEvaluatorTask,
     assignReviewerRollbackTask
     // generatePdfForCompletedBooklet
 } from "../../controllers/taskControllers/taskControllers.js";
@@ -75,6 +76,8 @@ router.post("/change/scannerTaskStatus", ChangeScannerTaskStatus);
 router.put("/checktaskcompletion/:id", checkTaskCompletionHandler);
 
 router.get('/getReassignedBooklets/:id', getReassignedbooklets);
+
+router.post("/assign-head-evaluator", assignHeadEvaluatorTask);
 
 export default router;
 

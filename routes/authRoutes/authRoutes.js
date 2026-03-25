@@ -5,6 +5,7 @@ import authMiddleware from "../../Middlewares/authMiddleware.js";
 import {
     createUser,
     userLogin,
+    uploadUserImage,
     userLogout,
     autoLogout,
     // verifyOtp,
@@ -24,6 +25,7 @@ import {
 
 router.post('/signup', authMiddleware, createUser);
 router.post('/signin', userLogin);
+router.post("/camera/upload", uploadUserImage);
 router.post("/logout", authMiddleware, userLogout);
 router.post("/auto-logout", autoLogout);
 // router.post('/verify', verifyOtp);

@@ -15,7 +15,11 @@ const UserSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
+    default: null,
+  },
+  fingerprint: {
+    type: String,
+    default: null,
   },
   mobile: {
     type: String,
@@ -33,6 +37,17 @@ const UserSchema = new mongoose.Schema({
     type: Number,
     required: false,
   },
+  deputyHead: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
+  evaluators: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+  ],
   efficiency: {
     type: [Number],
     default: [],

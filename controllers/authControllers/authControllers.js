@@ -1,6 +1,8 @@
 import Otp from "../../models/authModels/otp.js";
 import User from "../../models/authModels/User.js";
 import bcrypt from "bcryptjs";
+import fs from "fs";
+import path from "path";
 import sendOtpEmail from "../../services/otpService.js";
 import jwt from "jsonwebtoken";
 import { isValidObjectId } from "../../services/mongoIdValidation.js";
@@ -32,14 +34,15 @@ const createUser = async (req, res) => {
     permissions,
     subjectCode,
     maxBooklets,
+    fingerprintTemplate,
+    evaluators,
   } = req.body;
 
-  if (!name || !email || !password || !mobile || !role || !permissions) {
-    return res.status(400).json({ message: "All fields are required" });
+  if (!name || !email || !mobile || !role || !permissions) {
+    return res.status(400).json({ message: "All fields are not here" });
   }
 
   const existingUser = await User.findOne({ email });
-
   if (existingUser) {
     return res.status(409).json({ message: "User already exists" });
   }
@@ -53,55 +56,92 @@ const createUser = async (req, res) => {
     }
   }
 
-  const session = await mongoose.startSession();
+  if (role === "reviewer") {
+    if (evaluators && evaluators.length > 3) {
+      return res.status(400).json({
+        message: "A deputy head can have maximum 3 evaluators",
+      });
+    }
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-  // const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-  if (password) {
-    await sendEmailSignup(
-      email,
-      `The password you created for the Onscreen Marking site is "${password}". Please keep it confidential.`,
-    );
+    if (evaluators) {
+      for (let id of evaluators) {
+        if (!isValidObjectId(id)) {
+          return res.status(400).json({
+            message: "Invalid evaluator ID",
+          });
+        }
+      }
+    }
   }
+
+  const session = await mongoose.startSession();
 
   try {
     session.startTransaction();
 
+    let hashedPassword = null;
+
+    if (password && password.trim() !== "") {
+      hashedPassword = await bcrypt.hash(password, 10);
+
+      await sendEmailSignup(
+        email,
+        `The password you created for the Onscreen Marking site is "${password}". Please keep it confidential.`
+      );
+    }
+
+    // ✅ Create user
     const newUser = new User({
       name,
       email,
-      password: hashedPassword,
+      password: hashedPassword || null,
       mobile,
       role,
       permissions,
       subjectCode,
       maxBooklets,
+      fingerprint: fingerprintTemplate,
+      evaluators: role === "reviewer" ? evaluators : [],
     });
-    await newUser.save();
 
-    // await sendOtpEmail(email, otpCode);
+    await newUser.save({ session });
 
-    // await Otp.create({
-    //     user: newUser._id,
-    //     otp: otpCode,
-    //     expiresAt: Date.now() + 10 * 60 * 1000
-    // });
+    /* ------------------------------------------------------------------ */
+    /* 🔥 CORE LOGIC: SET deputyHead IN evaluators                         */
+    /* ------------------------------------------------------------------ */
+
+    if (role === "reviewer" && evaluators?.length) {
+      await User.updateMany(
+        { _id: { $in: evaluators } },
+        {
+          $set: { deputyHead: newUser._id },
+        },
+        { session }
+      );
+
+      console.log("🔥 Evaluators linked to Deputy Head");
+    }
+
+    /* ------------------------------------------------------------------ */
 
     await session.commitTransaction();
 
-    res.status(201).json({ message: "User created successfully" });
+    res.status(201).json({
+      message: "User created successfully",
+      user: newUser,
+    });
   } catch (error) {
     await session.abortTransaction();
     console.error("Error during user creation:", error);
-    res
-      .status(500)
-      .json({ message: "Failed to send OTP", error: error.message });
+
+    res.status(500).json({
+      message: "Failed to create user",
+      error: error.message,
+    });
   } finally {
     session.endSession();
   }
 };
-
 /* -------------------------------------------------------------------------- */
 /*                           USER LOGIN                                       */
 /* -------------------------------------------------------------------------- */
@@ -174,6 +214,33 @@ const createUser = async (req, res) => {
 //   }
 // };
 
+const compareFingerprints = (fp1, fp2) => {
+  try {
+    if (!fp1 || !fp2) return 0;
+
+    const buf1 = Buffer.from(fp1, "base64");
+    const buf2 = Buffer.from(fp2, "base64");
+
+    const minLength = Math.min(buf1.length, buf2.length);
+    const maxLength = Math.max(buf1.length, buf2.length);
+
+    if (minLength === 0) return 0;
+
+    let matchCount = 0;
+
+    for (let i = 0; i < minLength; i++) {
+      if (buf1[i] === buf2[i]) {
+        matchCount++;
+      }
+    }
+
+    return (matchCount / maxLength) * 100;
+  } catch (err) {
+    console.error("Fingerprint compare error:", err);
+    return 0;
+  }
+};
+
 const userLogin = async (req, res) => {
   const { email, password, type } = req.body;
 
@@ -181,9 +248,9 @@ const userLogin = async (req, res) => {
     return res.status(400).json({ message: "Email is required" });
   }
 
-  if (!password) {
-    return res.status(400).json({ message: "Password is required" });
-  }
+  // if (!password) {
+  //   return res.status(400).json({ message: "Password is required" });
+  // }
 
   try {
     if (password && type === "password") {
@@ -208,9 +275,10 @@ const userLogin = async (req, res) => {
       if (!isPasswordValid) {
         user.loginAttempts += 1;
 
-        // 🚨 IF 3 WRONG ATTEMPTS → LOCK FOR 15 MINUTES
+        // 🚨 IF 3 WRONG ATTEMPTS → LOCK FOR 1 MINUTES
         if (user.loginAttempts >= 3) {
-          user.lockUntil = Date.now() + 1 * 60 * 1000; // 15 minutes
+          // user.lockUntil = Date.now() + 1 * 60 * 1000; // 1 minutes
+          user.lockUntil = Date.now() + 5 * 1000; // 5 Seconds
           await user.save();
 
           return res.status(403).json({
@@ -338,12 +406,190 @@ const userLogin = async (req, res) => {
       res
         .status(200)
         .json({ message: "OTP sent to your email.", userId: user._id });
+    } else if (type === "fingerprint") {
+      const { fingerprintTemplate } = req.body;
+
+      if (!fingerprintTemplate) {
+        return res.status(400).json({
+          message: "Fingerprint is required",
+        });
+      }
+
+      const user = await User.findOne({ email });
+
+      if (!user || !user.fingerprint) {
+        return res.status(404).json({
+          message: "User or fingerprint not found",
+        });
+      }
+
+      // 🔒 CHECK IF ACCOUNT IS LOCKED
+      if (user.lockUntil && user.lockUntil > Date.now()) {
+        const remainingTime = Math.ceil((user.lockUntil - Date.now()) / 60000);
+        return res.status(403).json({
+          message: `Account locked. Try again after ${remainingTime} minute(s).`,
+        });
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* ⚠️ TEMP MATCH (REPLACE LATER WITH SDK MATCH)                        */
+      /* ------------------------------------------------------------------ */
+
+      const similarity = compareFingerprints(
+        user.fingerprint,
+        fingerprintTemplate,
+      );
+
+      console.log("Fingerprint similarity:", similarity);
+
+      const THRESHOLD = 20;
+
+      if (similarity < THRESHOLD) {
+        user.loginAttempts += 1;
+
+        if (user.loginAttempts >= 3) {
+          user.lockUntil = Date.now() + 5 * 1000;
+          await user.save();
+
+          return res.status(403).json({
+            message: "Account locked due to fingerprint mismatch.",
+          });
+        }
+
+        await user.save();
+
+        return res.status(401).json({
+          message: `Fingerprint mismatch (${similarity.toFixed(2)}%). ${
+            3 - user.loginAttempts
+          } attempt(s) remaining.`,
+        });
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* ✅ SUCCESS LOGIN                                                    */
+      /* ------------------------------------------------------------------ */
+
+      user.loginAttempts = 0;
+      user.lockUntil = undefined;
+      await user.save();
+
+      const enableAutoLogout =
+        req.body.enableAutoLogout === true ||
+        req.body.enableAutoLogout === "true";
+
+      const tokenExpiry = enableAutoLogout ? "5m" : "72h";
+
+      const sessionId = crypto.randomUUID();
+
+      const token = jwt.sign(
+        { userId: user._id, email: user.email, role: user.role, sessionId },
+        process.env.JWT_SECRET,
+        { expiresIn: tokenExpiry },
+      );
+
+      // 🔒 FORCE LOGOUT OLD SESSION
+      await UserLoginLog.updateMany(
+        { userId: user._id, status: 1 },
+        {
+          $set: {
+            status: 0,
+            logoutAt: new Date(),
+            logoutReason: "Logged in from another device",
+          },
+        },
+      );
+
+      // 📝 LOGIN LOG
+      await UserLoginLog.create({
+        userId: user._id,
+        sessionId,
+        loginAt: new Date(),
+        status: 1,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+
+      await redisClient.set(`user:session:${user._id}`, sessionId);
+
+      if (enableAutoLogout) {
+        await redisClient.setEx(
+          `session:${user._id}`,
+          300,
+          JSON.stringify({
+            userId: user._id,
+            lastActivity: Date.now(),
+          }),
+        );
+      }
+
+      // 🔥 MARK ONLINE
+      await redisClient.setEx(
+        `online:user:${user._id}`,
+        600,
+        JSON.stringify({
+          userId: user._id,
+          lastSeen: Date.now(),
+        }),
+      );
+      await redisClient.sAdd("online:users", String(user._id));
+
+      return res.status(200).json({
+        message: "Login successful (fingerprint)",
+        token,
+        userId: user._id,
+        autoLogoutEnabled: enableAutoLogout,
+      });
     }
   } catch (error) {
     console.error("Error during login:", error);
     res
       .status(500)
       .json({ message: "Internal server error", error: error.message });
+  }
+};
+
+const uploadUserImage = async (req, res) => {
+  try {
+    const { image, userId } = req.body;
+
+    // console.log("Image Of the user is this -:", image)
+    console.log("UserId of the Clicked image is this -:", userId);
+
+    // ✅ Validation
+    if (!image || !userId) {
+      return res.status(400).json({
+        message: "Image and userId are required",
+      });
+    }
+
+    // ✅ Extract base64
+    const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+
+    // ✅ Folder path
+    const uploadDir = path.join(process.cwd(), "uploads", "user_image");
+
+    // ✅ Create folder if not exists
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // ✅ Unique filename
+    const fileName = `user_${userId}_${Date.now()}.jpg`;
+
+    const filePath = path.join(uploadDir, fileName);
+
+    // ✅ Save image
+    fs.writeFileSync(filePath, base64Data, "base64");
+
+    return res.status(200).json({
+      message: "Image saved successfully",
+      fileName,
+    });
+  } catch (error) {
+    console.error("Image upload error:", error);
+    res.status(500).json({
+      message: "Upload failed",
+    });
   }
 };
 
@@ -532,6 +778,7 @@ const getAllUsers = async (req, res) => {
 
 const updateUserDetails = async (req, res) => {
   const { id } = req.params;
+
   const {
     name,
     mobile,
@@ -540,22 +787,22 @@ const updateUserDetails = async (req, res) => {
     subjectCode,
     maxBooklets,
     changepassword,
+    evaluators, // ✅ NEW (for reviewer)
+    deputyHead, // ✅ NEW (for evaluator)
   } = req.body;
 
   try {
-    // Validate the user ID format
     if (!isValidObjectId(id)) {
       return res.status(400).json({ message: "Invalid user ID." });
     }
 
-    // Check if required fields are provided
     if (!name || !mobile || !role || !permissions) {
-      return res
-        .status(400)
-        .json({ message: "Name, mobile, role, and permissions are required" });
+      return res.status(400).json({
+        message: "Name, mobile, role, and permissions are required",
+      });
     }
 
-    // If the role is 'evaluator', check if additional fields are provided
+    // ✅ Evaluator validation
     if (role === "evaluator") {
       if (!subjectCode || !maxBooklets) {
         return res.status(400).json({
@@ -565,41 +812,129 @@ const updateUserDetails = async (req, res) => {
       }
     }
 
-    // Construct an update object, only including the fields that are provided
+    // ✅ Reviewer validation
+    if (role === "reviewer") {
+      if (evaluators && evaluators.length > 3) {
+        return res.status(400).json({
+          message: "A deputy head can have maximum 3 evaluators",
+        });
+      }
+
+      if (evaluators) {
+        for (let ev of evaluators) {
+          if (!isValidObjectId(ev)) {
+            return res.status(400).json({
+              message: "Invalid evaluator ID",
+            });
+          }
+        }
+      }
+    }
+
     const updateData = {};
 
-    const hashedPassword = await bcrypt.hash(changepassword, 10);
-
-    // Add fields to the updateData object if they are provided in the request body
+    // ✅ Basic fields
     if (name) updateData.name = name;
     if (mobile) updateData.mobile = mobile;
     if (role) updateData.role = role;
     if (permissions) updateData.permissions = permissions;
-    if (subjectCode) updateData.subjectCode = subjectCode; // This is an array field
+    if (subjectCode) updateData.subjectCode = subjectCode;
     if (maxBooklets) updateData.maxBooklets = maxBooklets;
-    if (changepassword) updateData.password = hashedPassword;
 
-    // Update the user in the database
-    const user = await User.findByIdAndUpdate(id, updateData, { new: true });
+    // ✅ Password optional
+    if (changepassword && changepassword.trim() !== "") {
+      const hashedPassword = await bcrypt.hash(changepassword, 10);
+      updateData.password = hashedPassword;
+    }
 
-    // If no user is found
-    if (!user) {
+    // ✅ Reviewer → save evaluators
+    if (role === "reviewer") {
+      updateData.evaluators = evaluators || [];
+    }
+
+    // ✅ Evaluator → save deputy head
+    if (role === "evaluator") {
+      updateData.deputyHead = deputyHead || null;
+    }
+
+    // 🔁 GET OLD USER (IMPORTANT for relation cleanup)
+    const oldUser = await User.findById(id);
+
+    // 🔄 UPDATE USER
+    const updatedUser = await User.findByIdAndUpdate(id, updateData, {
+      new: true,
+    });
+
+    if (!updatedUser) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const email = user.email;
+    /* ------------------------------------------------------------------ */
+    /* 🔥 RELATION SYNC LOGIC (MOST IMPORTANT PART)                        */
+    /* ------------------------------------------------------------------ */
 
-    if (changepassword) {
-      await sendEmail(email, changepassword);
+    // ✅ CASE 1: Reviewer updated → update all evaluators
+    if (role === "reviewer") {
+      const newEvaluators = evaluators || [];
+      const oldEvaluators = oldUser.evaluators || [];
+
+      // ❌ Remove old mappings
+      const removedEvaluators = oldEvaluators.filter(
+        (ev) => !newEvaluators.includes(ev.toString()),
+      );
+
+      if (removedEvaluators.length) {
+        await User.updateMany(
+          { _id: { $in: removedEvaluators } },
+          { $unset: { deputyHead: "" } },
+        );
+      }
+
+      // ✅ Add new mappings
+      if (newEvaluators.length) {
+        await User.updateMany(
+          { _id: { $in: newEvaluators } },
+          { $set: { deputyHead: updatedUser._id } },
+        );
+      }
     }
 
-    // Return success message
-    res.status(200).json({ message: "User updated successfully", user });
+    // ✅ CASE 2: Evaluator updated → update deputy head mapping
+    if (role === "evaluator") {
+      const oldDeputy = oldUser.deputyHead;
+
+      // ❌ Remove from old deputy
+      if (oldDeputy) {
+        await User.findByIdAndUpdate(oldDeputy, {
+          $pull: { evaluators: updatedUser._id },
+        });
+      }
+
+      // ✅ Add to new deputy
+      if (deputyHead) {
+        await User.findByIdAndUpdate(deputyHead, {
+          $addToSet: { evaluators: updatedUser._id },
+        });
+      }
+    }
+
+    /* ------------------------------------------------------------------ */
+
+    // 📧 Send password mail
+    if (changepassword && changepassword.trim() !== "") {
+      await sendEmail(updatedUser.email, changepassword);
+    }
+
+    res.status(200).json({
+      message: "User updated successfully",
+      user: updatedUser,
+    });
   } catch (error) {
     console.error("Error updating user details:", error);
-    res
-      .status(500)
-      .json({ message: "Failed to update user details", error: error.message });
+    res.status(500).json({
+      message: "Failed to update user details",
+      error: error.message,
+    });
   }
 };
 
@@ -873,7 +1208,7 @@ const checkIdleTimeout = async (req, res, next) => {
 const autoLogout = async (req, res) => {
   try {
     const { token } = req.body;
-    if (!token) return res.status(200).json({autoLogout: true,});
+    if (!token) return res.status(200).json({ autoLogout: true });
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
@@ -1067,6 +1402,7 @@ const userLogout = async (req, res) => {
 export {
   createUser,
   userLogin,
+  uploadUserImage,
   userLogout,
   autoLogout,
   // verifyOtp,

@@ -10,6 +10,11 @@ const taskSchema = new mongoose.Schema({
     ref: "User",
     required: true,
   },
+  evaluatorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
   questiondefinitionId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "QuestionDefinition",

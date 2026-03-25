@@ -13,6 +13,7 @@ import BookletAnswerPdfImage from "../models/EvaluationModels/bookletAnswerPdfIm
 
 import Schema from "../models/schemeModel/schema.js";
 import Marks from "../models/EvaluationModels/marksModel.js";
+import HeadMarks from "../models/EvaluationModels/headMarksModel.js";
 import mongoose from "mongoose";
 
 import { isValidObjectId } from "../services/mongoIdValidation.js";
@@ -24,21 +25,37 @@ const baseDataDir = path.join(__dirname, "../Annotations");
 const bookletBaseDataDir = path.join(__dirname, "../BookletAnnotations");
 
 // FIXED: Only use answerPdfId and page
-export function getFilePath(userId, answerPdfId, page, taskType = "question") {
+export function getFilePath(
+  userId,
+  answerPdfId,
+  page,
+  taskType = "question",
+  evaluatorId = null,
+) {
   console.log("🧩 getFilePath called with:", {
     userId,
     answerPdfId,
     page,
     baseDataDir,
+    evaluatorId,
   });
 
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
 
-  const pdfDir = path.join(
-    String(rootDir),
-    String(userId),
-    String(answerPdfId),
-  );
+  let pdfDir;
+
+  if (evaluatorId) {
+    // 🔥 HEAD EVALUATOR CASE
+    pdfDir = path.join(
+      String(rootDir),
+      String(evaluatorId), // ROOT (original evaluator)
+      String(answerPdfId),
+      String(userId), // CHILD (head evaluator)
+    );
+  } else {
+    // ✅ NORMAL EVALUATOR
+    pdfDir = path.join(String(rootDir), String(userId), String(answerPdfId));
+  }
 
   if (!fs.existsSync(pdfDir)) {
     fs.mkdirSync(pdfDir, { recursive: true });
@@ -51,15 +68,19 @@ export function getMarksDataFilePath(
   userId,
   answerPdfId,
   taskType = "question",
+  evaluatorId = null,
 ) {
   // Create path: Annotations/answerPdfId/
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
 
-  const pdfDir = path.join(
-    String(rootDir),
-    String(userId),
-    String(answerPdfId),
-  );
+  const pdfDir = evaluatorId
+    ? path.join(
+        String(rootDir),
+        String(evaluatorId),
+        String(answerPdfId),
+        String(userId),
+      )
+    : path.join(String(rootDir), String(userId), String(answerPdfId));
 
   // Ensure directory exists
   if (!fs.existsSync(pdfDir)) {
@@ -69,15 +90,23 @@ export function getMarksDataFilePath(
   return path.join(pdfDir, `marksData.json`);
 }
 
-export function getMarksFilePath(userId, answerPdfId, taskType = "question") {
+export function getMarksFilePath(
+  userId,
+  answerPdfId,
+  taskType = "question",
+  evaluatorId = null,
+) {
   // Create path: Annotations/userId/answerPdfId/
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
 
-  const pdfDir = path.join(
-    String(rootDir),
-    String(userId),
-    String(answerPdfId),
-  );
+  const pdfDir = evaluatorId
+    ? path.join(
+        String(rootDir),
+        String(evaluatorId),
+        String(answerPdfId),
+        String(userId),
+      )
+    : path.join(String(rootDir), String(userId), String(answerPdfId));
 
   // Ensure directory exists
   if (!fs.existsSync(pdfDir)) {
@@ -114,12 +143,33 @@ export default function handleAnnotationSocket(io) {
       socket.emit("room-joined", { taskId, room: roomName });
     });
 
+    const getEvaluatorIdFromTask = async (taskId) => {
+      const task = await Task.findById(taskId);
+
+      if (!task) return null;
+
+      return task.evaluatorId || null; // 👈 null = normal evaluator
+    };
+
+    const validateHeadAccess = (userId, evaluatorId) => {
+      // ❌ HEAD trying to write evaluator folder
+      if (evaluatorId && String(userId) === String(evaluatorId)) {
+        throw new Error("❌ Head evaluator cannot modify evaluator files");
+      }
+    };
+
     // ✅ Helper functions
-    const loadData = (userId, answerPdfId, page) => {
+    const loadData = (userId, answerPdfId, page, evaluatorId) => {
       if (answerPdfId === null || answerPdfId === undefined) {
         return { annotations: [], comments: [] };
       }
-      const filePath = getFilePath(userId, answerPdfId, page, socket.taskType);
+      const filePath = getFilePath(
+        userId,
+        answerPdfId,
+        page,
+        socket.taskType,
+        evaluatorId,
+      );
       if (fs.existsSync(filePath)) {
         try {
           return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -131,11 +181,12 @@ export default function handleAnnotationSocket(io) {
       return { annotations: [], comments: [] };
     };
 
-    const loadMarksData = (userId, answerPdfId) => {
+    const loadMarksData = (userId, answerPdfId, evaluatorId) => {
       const filePath = getMarksDataFilePath(
         userId,
         answerPdfId,
         socket.taskType,
+        evaluatorId,
       );
       if (fs.existsSync(filePath)) {
         try {
@@ -147,8 +198,13 @@ export default function handleAnnotationSocket(io) {
       }
       return { marks: [] };
     };
-    const loadMarks = (userId, answerPdfId) => {
-      const filePath = getMarksFilePath(userId, answerPdfId, socket.taskType);
+    const loadMarks = (userId, answerPdfId, evaluatorId) => {
+      const filePath = getMarksFilePath(
+        userId,
+        answerPdfId,
+        socket.taskType,
+        evaluatorId,
+      );
       if (fs.existsSync(filePath)) {
         try {
           return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -160,13 +216,16 @@ export default function handleAnnotationSocket(io) {
       return { marks: [] };
     };
 
-    const saveData = (taskId, userId, answerPdfId, page, data) => {
+    const saveData = (taskId, userId, answerPdfId, page, data, evaluatorId) => {
       try {
+        // 🔥 BLOCK INVALID ACCESS
+        validateHeadAccess(userId, evaluatorId);
         const filePath = getFilePath(
           userId,
           answerPdfId,
           page,
           socket.taskType,
+          evaluatorId,
         );
         fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
         console.log(
@@ -177,12 +236,14 @@ export default function handleAnnotationSocket(io) {
       }
     };
 
-    const saveMarksData = (userId, answerPdfId, data) => {
+    const saveMarksData = (userId, answerPdfId, data, evaluatorId) => {
       try {
+        validateHeadAccess(userId, evaluatorId);
         const filePath = getMarksDataFilePath(
           userId,
           answerPdfId,
           socket.taskType,
+          evaluatorId,
         );
 
         console.log("🚨 FORCE SAVING DATA");
@@ -210,9 +271,15 @@ export default function handleAnnotationSocket(io) {
       }
     };
 
-    const saveMarks = (userId, answerPdfId, data) => {
+    const saveMarks = (userId, answerPdfId, data, evaluatorId) => {
       try {
-        const filePath = getMarksFilePath(userId, answerPdfId, socket.taskType);
+        validateHeadAccess(userId, evaluatorId);
+        const filePath = getMarksFilePath(
+          userId,
+          answerPdfId,
+          socket.taskType,
+          evaluatorId,
+        );
         fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
         console.log(`✅ marks saved for answerPdfId ${answerPdfId}`);
       } catch (error) {
@@ -221,18 +288,20 @@ export default function handleAnnotationSocket(io) {
     };
 
     // ✅ Load specific page data
-    socket.on("load-page-data", (data) => {
+    socket.on("load-page-data", async (data) => {
       try {
         console.log("data", data);
 
         const { taskId, userId, answerPdfId, page } = data;
         console.log(`📄 Loading data for task ${taskId}, page ${page}`);
 
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+
         if (answerPdfId === null || answerPdfId === undefined) {
           return { annotations: [], comments: [] };
         }
 
-        const fileData = loadData(userId, answerPdfId, page);
+        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
         console.log("fileData", fileData);
 
         socket.emit("page-data-loaded", fileData);
@@ -252,6 +321,8 @@ export default function handleAnnotationSocket(io) {
 
         console.log(`📝 Adding annotation to task ${taskId}, page ${page}`);
 
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+
         if (!userId || !answerPdfId || page === undefined || page === null) {
           console.error("❌ INVALID ADD-ANNOTATION PAYLOAD", {
             userId,
@@ -262,7 +333,7 @@ export default function handleAnnotationSocket(io) {
           return;
         }
 
-        const fileData = loadData(userId, answerPdfId, page);
+        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
         console.log("data loaded");
 
         const annotationObject = {
@@ -307,7 +378,7 @@ export default function handleAnnotationSocket(io) {
           console.log("✅ New annotation added with ID:", data.timeStamps);
         }
 
-        saveData(taskId, userId, answerPdfId, page, fileData);
+        saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
         console.log("fileData after processing:", fileData);
 
         // Broadcast to the task room (all pages in same PDF)
@@ -351,23 +422,25 @@ export default function handleAnnotationSocket(io) {
     });
 
     // ✅ Add comment
-    socket.on("add-comment", (data) => {
+    socket.on("add-comment", async (data) => {
       try {
         console.log("data", data);
 
         const { taskId, answerPdfId, userId, page } = data;
         console.log(`💬 Adding comment to task ${taskId}, page ${page}`);
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
 
         if (answerPdfId === null || answerPdfId === undefined) {
           return { annotations: [], comments: [] };
         }
 
-        const fileData = loadData(userId, answerPdfId, page);
+        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
         console.log("Data loaded");
 
         const commentObject = {
           // Generate ID if not provided
           id: data.id,
+          userId: data.userId,
           taskId: data.taskId,
           page: data.page,
           answerPdfId: data.answerPdfId,
@@ -399,7 +472,7 @@ export default function handleAnnotationSocket(io) {
           fileData.comments.push(commentObject);
           console.log("✅ New comment added with ID:", commentObject.id);
         }
-        saveData(taskId, userId, answerPdfId, page, fileData);
+        saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
         console.log("fileData after processing:", fileData);
 
         const roomName =
@@ -436,6 +509,15 @@ export default function handleAnnotationSocket(io) {
         console.log("data", data);
         console.log(`🗑️ Deleting annotation from task ${taskId}, page ${page}`);
 
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+
+        let actualUserId = userId;
+
+        // 🔥 FORCE: agar evaluatorId exist karta hai → matlab HEAD hai
+        if (evaluatorId) {
+          actualUserId = userId; // headEvaluatorId
+        }
+
         if (!userId || !answerPdfId || page === undefined || page === null) {
           console.error("❌ INVALID DELETE-ANNOTATION PAYLOAD", {
             taskId,
@@ -447,7 +529,7 @@ export default function handleAnnotationSocket(io) {
           return; // 🔥 Block unsafe folder writes
         }
 
-        const fileData = loadData(userId, answerPdfId, page);
+        const fileData = loadData(actualUserId, answerPdfId, page, evaluatorId);
         console.log("dataloaded", fileData);
 
         const idSet = new Set(annotationIds);
@@ -466,9 +548,9 @@ export default function handleAnnotationSocket(io) {
           `✅ Deleted ${deletedCount} annotation(s), remaining: ${fileData.annotations.length}`,
         );
 
-        saveData(taskId, userId, answerPdfId, page, fileData);
+        saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
 
-        const marksData = loadMarks(userId, answerPdfId);
+        const marksData = loadMarks(userId, answerPdfId, evaluatorId);
         console.log("marks data loaded for deletion");
 
         const existingMarksIndex = marksData.marks.findIndex(
@@ -504,12 +586,16 @@ export default function handleAnnotationSocket(io) {
             totalMarks,
           );
 
-          saveMarks(userId, answerPdfId, marksData);
+          saveMarks(userId, answerPdfId, marksData, evaluatorId);
         } else {
           console.log("❌ Question not found in questionMarksData.json:");
         }
 
-        const questionMarksData = loadMarksData(userId, answerPdfId);
+        const questionMarksData = loadMarksData(
+          userId,
+          answerPdfId,
+          evaluatorId,
+        );
         const existingMarksId = questionMarksData.marks.findIndex(
           (mark) => mark.questionsName === String(questionName),
         );
@@ -545,7 +631,7 @@ export default function handleAnnotationSocket(io) {
             totalMarks,
           );
 
-          saveMarksData(userId, answerPdfId, questionMarksData);
+          saveMarksData(userId, answerPdfId, questionMarksData, evaluatorId);
         } else {
           console.log("❌ Question not found in questionMarksData.json:");
         }
@@ -577,7 +663,7 @@ export default function handleAnnotationSocket(io) {
             };
           }
 
-          saveMarksData(userId, answerPdfId, questionMarksData);
+          saveMarksData(userId, answerPdfId, questionMarksData, evaluatorId);
           console.log(
             "questionMarksData after processing:",
             questionMarksData.marks[parentIndex],
@@ -598,6 +684,7 @@ export default function handleAnnotationSocket(io) {
           answerPdfId,
           page,
           socket.taskType,
+          evaluatorId,
         );
         console.log("filePath", filePath);
 
@@ -689,11 +776,16 @@ export default function handleAnnotationSocket(io) {
     });
 
     // ✅ Delete comment
-    socket.on("delete-comment", (data) => {
+    socket.on("delete-comment", async (data) => {
       try {
         console.log("🗑️ Delete comment data:", data);
 
         const { taskId, userId, answerPdfId, page, commentIds } = data;
+
+        console.log("User Id of the comment is this -:", userId);
+
+        console.log("Incoming AnswerPdf Id -:", answerPdfId);
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
 
         // Validate required fields
         if (!taskId || !answerPdfId || page === undefined || !commentIds) {
@@ -706,7 +798,7 @@ export default function handleAnnotationSocket(io) {
 
         console.log(`🗑️ Deleting comment from task ${taskId}, page ${page}`);
 
-        const fileData = loadData(userId, answerPdfId, page);
+        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
         console.log("Data loaded", fileData);
 
         // Ensure comments array exists
@@ -727,7 +819,10 @@ export default function handleAnnotationSocket(io) {
           `✅ Deleted ${deletedCount} comment(s), remaining: ${fileData.comments.length}`,
         );
 
-        saveData(taskId, userId, answerPdfId, page, fileData);
+        saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
+
+        const verifyData = loadData(userId, answerPdfId, page, evaluatorId);
+        console.log("AFTER DELETE (FILE):", verifyData.comments);
 
         const roomName =
           socket.taskType === "booklet"
@@ -744,20 +839,71 @@ export default function handleAnnotationSocket(io) {
       }
     });
 
-    socket.on("add-marks", (data) => {
+    socket.on("add-marks", async (data) => {
       try {
         console.log("marks-data", data);
 
-        const { taskId, userId, answerPdfId, question } = data;
+        const { taskId, userId, answerPdfId } = data;
 
-        if (answerPdfId === null || answerPdfId === undefined) {
-          return { annotations: [], comments: [] };
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const user = await mongoose.model("User").findById(userId).select("role");
+        const isHead = user?.role === "headEvaluator";
+
+        if (!answerPdfId) return;
+
+        /* ========================================================= */
+        /* 🔥 HEAD EVALUATOR FLOW (SEPARATE COLLECTION)              */
+        /* ========================================================= */
+
+        if (isHead) {
+          const existing = await HeadMarks.findOne({
+            answerPdfId,
+            questionDefinitionId: data.questionDefinitionId,
+            headEvaluatorId: userId,
+          });
+
+          if (existing) {
+            existing.allottedMarks += data.allottedMarks || 0;
+            existing.timerStamps = data.timeStamps;
+            existing.isMarked = true;
+            await existing.save();
+          } else {
+            await HeadMarks.create({
+              answerPdfId,
+              questionDefinitionId: data.questionDefinitionId,
+              headEvaluatorId: userId,
+              allottedMarks: data.allottedMarks || 0,
+              timerStamps: data.timeStamps,
+              isMarked: true,
+            });
+          }
+
+          console.log("✅ Head marks saved separately");
+
+          /* 🔁 SEND UPDATED DATA */
+          const headMarks = await HeadMarks.find({
+            answerPdfId,
+            headEvaluatorId: userId,
+          });
+
+          const roomName =
+            socket.taskType === "booklet"
+              ? `booklet_${taskId}`
+              : `task_${taskId}`;
+
+          io.to(roomName).emit("marks-updated", {
+            marks: headMarks,
+            status: "completed",
+          });
+
+          return; // 🔥 STOP NORMAL FLOW
         }
 
-        console.log(`📝 Adding marks to task ${taskId} and  ${question}`);
+        /* ========================================================= */
+        /* ✅ NORMAL FLOW (EVALUATOR + DEPUTY HEAD)                  */
+        /* ========================================================= */
 
-        const marksData = loadMarks(userId, answerPdfId);
-        console.log("marks data loaded");
+        const marksData = loadMarks(userId, answerPdfId, evaluatorId);
 
         const marksObject = {
           id: data.id,
@@ -772,131 +918,47 @@ export default function handleAnnotationSocket(io) {
           synced: data.synced !== undefined ? data.synced : false,
         };
 
-        console.log("question-number", marksObject.parentQuestionId);
-
         const existingMarksIndex = marksData.marks.findIndex(
           (mark) => mark.question === marksObject.question,
         );
 
         if (existingMarksIndex !== -1) {
-          // Question exists - add the new marks to existing marks
           const existingMarks =
             marksData.marks[existingMarksIndex].allottedMarks || 0;
-          console.log("existingMarks", existingMarks);
 
-          const newMarks = marksObject.allottedMarks || 0;
-          console.log("newMarks", newMarks);
-
-          const totalMarks = existingMarks + newMarks;
-          console.log("totalMarks", totalMarks);
-
-          // Update only the allottedMarks field, keep all other fields from marksObject
           marksData.marks[existingMarksIndex] = {
-            ...marksObject, // Keep all fields from the new marksObject
-            allottedMarks: totalMarks, // Only update the allottedMarks with accumulated value
+            ...marksObject,
+            allottedMarks: existingMarks + marksObject.allottedMarks,
           };
-
-          console.log(
-            "✅ Updated allottedMarks in marksData.json for ID:",
-            marksObject.id,
-          );
         } else {
           marksData.marks.push(marksObject);
-          console.log(
-            "❌ Mark not found in marksData.json with ID:",
-            marksObject.id,
-          );
         }
 
-        saveMarks(userId, answerPdfId, marksData);
-        console.log("marksData after processing:", marksData);
+        saveMarks(userId, answerPdfId, marksData, evaluatorId);
 
-        const questionMarksData = loadMarksData(userId, answerPdfId);
-        console.log("questionMarksData loaded");
+        const questionMarksData = loadMarksData(
+          userId,
+          answerPdfId,
+          evaluatorId,
+        );
 
         const existingMarksId = questionMarksData.marks.findIndex(
           (mark) => mark.questionsName === String(marksObject.question),
         );
 
         if (existingMarksId !== -1) {
-          // Question exists - add the new marks to existing marks
           const existingMarks =
             questionMarksData.marks[existingMarksId].allottedMarks || 0;
-          console.log("existingMarks", existingMarks);
 
-          const newMarks = marksObject.allottedMarks || 0;
-          console.log("newMarks", newMarks);
-
-          const totalMarks = existingMarks + newMarks;
-          console.log("totalMarks", totalMarks);
-
-          // Update only the allottedMarks field, keep all other fields
           questionMarksData.marks[existingMarksId] = {
             ...questionMarksData.marks[existingMarksId],
-            allottedMarks: totalMarks, // Only update the allottedMarks with accumulated value
-            isMarked: true, // Mark as marked
-            updatedAt: new Date().toISOString(), // Update timestamp
+            allottedMarks: existingMarks + marksObject.allottedMarks,
+            isMarked: true,
+            updatedAt: new Date().toISOString(),
           };
-
-          console.log(
-            "✅ Updated allottedMarks in questionMarksData.json for Question:",
-            marksObject.question,
-            "Previous:",
-            existingMarks,
-            "Added:",
-            newMarks,
-            "Total:",
-            totalMarks,
-          );
-          console.log("questionMarkData", questionMarksData);
-
-          saveMarksData(userId, answerPdfId, questionMarksData);
-          console.log(
-            "questionMarksData after processing:",
-            questionMarksData.marks[existingMarksId],
-          );
-        } else {
-          console.log(
-            "❌ Question not found in questionMarksData.json:",
-            marksObject.question,
-          );
-          console.log(
-            "Available questions:",
-            questionMarksData.marks.map((mark) => mark.questionsName),
-          );
         }
 
-        if (marksObject.parentQuestionId) {
-          const parentIndex = questionMarksData.marks.findIndex(
-            (m) => m._id === marksObject.parentQuestionId,
-          );
-          console.log("parentIndex", parentIndex);
-
-          if (parentIndex !== -1) {
-            const existingMarks =
-              questionMarksData.marks[parentIndex].allottedMarks || 0;
-            console.log("existingMarks for parent", existingMarks);
-
-            const newMarks = marksObject.allottedMarks || 0;
-            console.log("newMarks for parent", newMarks);
-
-            const totalMarks = existingMarks + newMarks;
-            console.log("totalMarks for parent", totalMarks);
-
-            questionMarksData.marks[parentIndex] = {
-              ...questionMarksData.marks[parentIndex],
-              allottedMarks: totalMarks,
-              isMarked: true,
-              updatedAt: new Date().toISOString(),
-            };
-
-            saveMarksData(userId, answerPdfId, questionMarksData);
-            console.log(
-              "questionMarksData after processing:",
-              questionMarksData.marks[parentIndex],
-            );
-          }
-        }
+        saveMarksData(userId, answerPdfId, questionMarksData, evaluatorId);
 
         emitMarksUpdate(io, taskId, userId, answerPdfId);
 
@@ -904,14 +966,13 @@ export default function handleAnnotationSocket(io) {
           socket.taskType === "booklet"
             ? `booklet_${taskId}`
             : `task_${taskId}`;
+
         io.to(roomName).emit("marks-updated", {
           ...questionMarksData,
           status: "completed",
         });
 
-        console.log("add-marks emitted", questionMarksData);
-
-        console.log(`✅ Marks added and broadcast to room: ${roomName}`);
+        console.log("✅ Normal marks flow executed");
       } catch (error) {
         console.error("Error in add-marks:", error);
       }
@@ -1156,6 +1217,13 @@ export default function handleAnnotationSocket(io) {
         console.log("📊 Get questions request:", data);
 
         const { taskId, userId, answerPdfId } = data;
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        console.log("Evaluator Id for the head is this -:", evaluatorId)
+
+        // 🔥 GET USER ROLE
+        const user = await mongoose.model("User").findById(userId).select("role");
+        const isHead = user?.role === "headEvaluator";
+        console.log("Is Head Id is this -:", isHead)
 
         if (!taskId || !answerPdfId) {
           throw new Error("taskId and answerPdfId are required");
@@ -1170,7 +1238,11 @@ export default function handleAnnotationSocket(io) {
         }
 
         // Check existing local marks file
-        const questionMarksData = loadMarksData(userId, answerPdfId);
+        const questionMarksData = loadMarksData(
+          userId,
+          answerPdfId,
+          evaluatorId,
+        );
 
         if (questionMarksData.marks?.length > 0) {
           socket.emit("questions-data", {
@@ -1240,7 +1312,16 @@ export default function handleAnnotationSocket(io) {
           throw new Error("No QuestionDefinitions found");
         }
 
-        const marksData = await Marks.find({ answerPdfId });
+        // 🔥 IMPORTANT FIX OF THE EVALUATOR AND HEAD EVALUATOR
+        let marksData = [];
+
+        if (!isHead) {
+          // ✅ evaluator + deputy → same flow
+          marksData = await Marks.find({ answerPdfId });
+        } else {
+          // ❌ head → DO NOT LOAD evaluator marks
+          marksData = [];
+        }
 
         const fileData = { marks: [] };
 
@@ -1250,17 +1331,28 @@ export default function handleAnnotationSocket(io) {
               m.questionDefinitionId.toString() === question._id.toString(),
           );
 
-          const marksInfo = marks
-            ? {
-                allottedMarks: marks.allottedMarks,
-                timerStamps: marks.timerStamps,
-                isMarked: marks.isMarked,
-              }
-            : {
-                allottedMarks: 0,
-                timerStamps: "",
-                isMarked: false,
-              };
+          let marksInfo;
+
+          if (isHead) {
+            // 🔥 HEAD → ALWAYS START FROM 0
+            marksInfo = {
+              allottedMarks: 0,
+              timerStamps: "",
+              isMarked: false,
+            };
+          } else if (marks) {
+            marksInfo = {
+              allottedMarks: marks.allottedMarks,
+              timerStamps: marks.timerStamps,
+              isMarked: marks.isMarked,
+            };
+          } else {
+            marksInfo = {
+              allottedMarks: 0,
+              timerStamps: "",
+              isMarked: false,
+            };
+          }
 
           fileData.marks.push({
             _id: question._id.toString(),
@@ -1283,7 +1375,7 @@ export default function handleAnnotationSocket(io) {
         });
 
         // Save locally
-        saveMarksData(userId, answerPdfId, fileData);
+        saveMarksData(userId, answerPdfId, fileData, evaluatorId);
 
         socket.emit("questions-data", {
           success: true,
@@ -1308,6 +1400,7 @@ export default function handleAnnotationSocket(io) {
 
         // Expect data to contain taskId and answerPdfId
         const { taskId, userId, answerPdfId } = data;
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
 
         if (answerPdfId === null || answerPdfId === undefined) {
           return { annotations: [], comments: [] };
@@ -1327,7 +1420,11 @@ export default function handleAnnotationSocket(io) {
         }
 
         // Check if marks data already exists in local file
-        const questionMarksData = loadMarksData(userId, answerPdfId);
+        const questionMarksData = loadMarksData(
+          userId,
+          answerPdfId,
+          evaluatorId,
+        );
 
         if (questionMarksData.marks && questionMarksData.marks.length > 0) {
           console.log("✅ Marks data already exists, skipping creation");
@@ -1444,7 +1541,7 @@ export default function handleAnnotationSocket(io) {
         });
 
         // Save to local file
-        saveMarksData(userId, answerPdfId, fileData);
+        saveMarksData(userId, answerPdfId, fileData, evaluatorId);
         console.log(
           `✅ Saved ${fileData.marks.length} questions to local file`,
         );
@@ -1469,8 +1566,32 @@ export default function handleAnnotationSocket(io) {
       try {
         const { taskId, userId, answerPdfId } = data;
 
-        const marksDataFile = loadMarksData(userId, answerPdfId);
-        const marksFile = loadMarks(userId, answerPdfId);
+        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const user = await mongoose.model("User").findById(userId).select("role");
+        const isHead = user?.role === "headEvaluator";
+
+        /* ========================================================= */
+        /* 🔥 HEAD FLOW                                              */
+        /* ========================================================= */
+
+        if (isHead) {
+          const headMarks = await HeadMarks.find({
+            answerPdfId,
+            headEvaluatorId: userId,
+          });
+
+          return socket.emit("final-marks-data", {
+            marks: headMarks,
+            marksData: headMarks,
+          });
+        }
+
+        /* ========================================================= */
+        /* ✅ NORMAL FLOW                                            */
+        /* ========================================================= */
+
+        const marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
+        const marksFile = loadMarks(userId, answerPdfId, evaluatorId);
 
         socket.emit("final-marks-data", {
           marks: marksFile.marks || [],
@@ -1487,30 +1608,24 @@ export default function handleAnnotationSocket(io) {
     });
 
     socket.on("fetch-reviewerData", async (data) => {
-  try {
-    const { taskId, userId, evaluatorId, answerPdfId, page } = data;
+      try {
+        const { evaluatorId, answerPdfId, page } = data;
 
-    // evaluator data load
-    const marksFile = loadMarks(evaluatorId, answerPdfId);
-    const marksDataFile = loadMarksData(evaluatorId, answerPdfId);
-    const fileData = loadData(evaluatorId, answerPdfId, page);
+        // ✅ DIRECTLY READ evaluator data
+        const marksFile = loadMarks(evaluatorId, answerPdfId);
+        const marksDataFile = loadMarksData(evaluatorId, answerPdfId);
+        const fileData = loadData(evaluatorId, answerPdfId, page);
 
-    // copy to reviewer folder
-    saveMarks(userId, answerPdfId, marksFile);
-    saveMarksData(userId, answerPdfId, marksDataFile);
-    saveData(taskId, userId, answerPdfId, page, fileData);
+        // ✅ SEND only (NO COPYING)
+        socket.emit("page-data-loaded", fileData);
 
-    // send same events used by evaluator
-    socket.emit("page-data-loaded", fileData);
-
-    socket.emit("updated-marks-data", {
-      marks: marksFile.marks || [],
-      marksData: marksDataFile.marks || [],
-    });
-
-  } catch (error) {
-    console.error("Error in fetch-reviewerData:", error);
-  }
+        socket.emit("updated-marks-data", {
+          marks: marksFile.marks || [],
+          marksData: marksDataFile.marks || [],
+        });
+      } catch (error) {
+        console.error("Error in fetch-reviewerData:", error);
+      }
     });
 
     socket.on("delete-annotation-evaluatorFromReviewer", async (data) => {
@@ -1792,9 +1907,11 @@ export default function handleAnnotationSocket(io) {
       console.log(`🔴 Client ${socket.id} left room: ${roomName}`);
     });
 
-    const emitMarksUpdate = (io, taskId, userId, answerPdfId) => {
-      const marksDataFile = loadMarksData(userId, answerPdfId);
-      const marksFile = loadMarks(userId, answerPdfId);
+    const emitMarksUpdate = async (io, taskId, userId, answerPdfId) => {
+      const evaluatorId = await getEvaluatorIdFromTask(taskId);
+
+      const marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
+      const marksFile = loadMarks(userId, answerPdfId, evaluatorId);
 
       const roomName =
         socket.taskType === "booklet" ? `booklet_${taskId}` : `task_${taskId}`;

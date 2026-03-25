@@ -1,3 +1,8 @@
+import dns from 'node:dns';
+
+// Force Node to use specific DNS servers to resolve Atlas SRV records
+dns.setServers(['8.8.8.8', '1.1.1.1']);
+
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";

@@ -97,19 +97,20 @@ const subjectFolderWatcher = () => {
 
   io.on("connection", async (socket) => {
     try {
+      // const folders = await SubjectFolderModel.find();
+      // console.log("RAW folders:", folders);
+
       const foldersWithClassInfo = await SubjectFolderModel.aggregate([
-        // 1️⃣ Subject Join
         {
           $lookup: {
             from: "subjects",
-            localField: "folderName", // folderName = subject.code
+            localField: "folderName",
             foreignField: "code",
             as: "subject",
           },
         },
-        { $unwind: "$subject" },
+        { $unwind: { path: "$subject", preserveNullAndEmptyArrays: true } },
 
-        // 2️⃣ Course Join
         {
           $lookup: {
             from: "courses",
@@ -118,9 +119,8 @@ const subjectFolderWatcher = () => {
             as: "course",
           },
         },
-        { $unwind: "$course" },
+        { $unwind: { path: "$course", preserveNullAndEmptyArrays: true } },
 
-        // 3️⃣ CourseSchemaRelation Join (NEW 🔥)
         {
           $lookup: {
             from: "courseschemarelations",
@@ -129,9 +129,8 @@ const subjectFolderWatcher = () => {
             as: "relation",
           },
         },
-        { $unwind: "$relation" },
+        { $unwind: { path: "$relation", preserveNullAndEmptyArrays: true } },
 
-        // 4️⃣ Schema Join (NEW 🔥)
         {
           $lookup: {
             from: "schemas",
@@ -140,9 +139,8 @@ const subjectFolderWatcher = () => {
             as: "schema",
           },
         },
-        { $unwind: "$schema" },
+        { $unwind: { path: "$schema", preserveNullAndEmptyArrays: true } },
 
-        // 5️⃣ Final Data Shape
         {
           $project: {
             folderName: 1,
@@ -158,11 +156,14 @@ const subjectFolderWatcher = () => {
             className: "$course.className",
             classCode: "$course.classCode",
 
-            schemaType: "$schema.schemaType", // ✅ THIS IS WHAT YOU WANT
+            schemaType: "$schema.schemaType",
           },
         },
       ]);
-      // console.log("foldersWithClassInfo", foldersWithClassInfo);
+      // console.log(
+      //   "foldersWithClassInfo for subject folder is this -:",
+      //   foldersWithClassInfo,
+      // );
 
       socket.emit("folder-list", foldersWithClassInfo);
     } catch (error) {

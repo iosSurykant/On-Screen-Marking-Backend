@@ -12,8 +12,8 @@ const scannerTaskSchema = new mongoose.Schema({
     },
     folderName: {
     type: String,
-    required: true,
-    unique: true
+    default: null,
+    // unique: true
   },
   templateId: {
     type: Number,
