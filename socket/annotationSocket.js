@@ -143,12 +143,45 @@ export default function handleAnnotationSocket(io) {
       socket.emit("room-joined", { taskId, room: roomName });
     });
 
-    const getEvaluatorIdFromTask = async (taskId) => {
+    const getEvaluatorContext = async (taskId, userId) => {
       const task = await Task.findById(taskId);
+      if (!task) return { evaluatorId: null, isHead: false };
 
-      if (!task) return null;
+      const user = await mongoose.model("User").findById(userId).select("role");
+      console.log("USER:", user);
 
-      return task.evaluatorId || null; // 👈 null = normal evaluator
+      const role = user?.role?.toLowerCase();
+      const isHead = role === "headevaluator";
+
+      return {
+        evaluatorId: isHead ? task.evaluatorId : null, // 🔥 ONLY FOR HEAD
+        isHead,
+      };
+    };
+
+    const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
+      const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
+
+      const headFolderPath = path.join(
+        String(rootDir),
+        String(evaluatorId),
+        String(answerPdfId),
+        String(userId),
+      );
+
+      try {
+        if (fs.existsSync(headFolderPath)) {
+          // 🔥 DELETE COMPLETE FOLDER
+          fs.rmSync(headFolderPath, { recursive: true, force: true });
+          console.log("🔥 Head folder deleted:", headFolderPath);
+        }
+
+        // 🔥 RECREATE EMPTY FOLDER
+        fs.mkdirSync(headFolderPath, { recursive: true });
+        console.log("✅ Fresh head folder created:", headFolderPath);
+      } catch (err) {
+        console.error("❌ Error clearing head folder:", err);
+      }
     };
 
     const validateHeadAccess = (userId, evaluatorId) => {
@@ -236,7 +269,13 @@ export default function handleAnnotationSocket(io) {
       }
     };
 
-    const saveMarksData = (userId, answerPdfId, data, evaluatorId) => {
+    const saveMarksData = (
+      userId,
+      answerPdfId,
+      data,
+      evaluatorId,
+      isHead = false,
+    ) => {
       try {
         validateHeadAccess(userId, evaluatorId);
         const filePath = getMarksDataFilePath(
@@ -251,6 +290,19 @@ export default function handleAnnotationSocket(io) {
           "Question 1 allottedMarks:",
           data.marks.find((m) => m.questionsName === "1")?.allottedMarks,
         );
+
+        // 🔥 HEAD CASE → ALWAYS OVERWRITE FILE
+        if (isHead) {
+          console.log("🔥 HEAD → Clearing old marksData.json");
+
+          const freshData = {
+            marks: data.marks || [],
+            lastSaved: new Date().toISOString(),
+          };
+
+          fs.writeFileSync(filePath, JSON.stringify(freshData, null, 2));
+          return;
+        }
 
         data.lastSaved = new Date().toISOString();
 
@@ -295,7 +347,10 @@ export default function handleAnnotationSocket(io) {
         const { taskId, userId, answerPdfId, page } = data;
         console.log(`📄 Loading data for task ${taskId}, page ${page}`);
 
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
         if (answerPdfId === null || answerPdfId === undefined) {
           return { annotations: [], comments: [] };
@@ -321,7 +376,10 @@ export default function handleAnnotationSocket(io) {
 
         console.log(`📝 Adding annotation to task ${taskId}, page ${page}`);
 
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
         if (!userId || !answerPdfId || page === undefined || page === null) {
           console.error("❌ INVALID ADD-ANNOTATION PAYLOAD", {
@@ -379,6 +437,10 @@ export default function handleAnnotationSocket(io) {
         }
 
         saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
+
+        console.log(
+          "Annotation added → marks will be handled in add-marks only",
+        );
         console.log("fileData after processing:", fileData);
 
         // Broadcast to the task room (all pages in same PDF)
@@ -428,7 +490,10 @@ export default function handleAnnotationSocket(io) {
 
         const { taskId, answerPdfId, userId, page } = data;
         console.log(`💬 Adding comment to task ${taskId}, page ${page}`);
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
         if (answerPdfId === null || answerPdfId === undefined) {
           return { annotations: [], comments: [] };
@@ -509,7 +574,10 @@ export default function handleAnnotationSocket(io) {
         console.log("data", data);
         console.log(`🗑️ Deleting annotation from task ${taskId}, page ${page}`);
 
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
         let actualUserId = userId;
 
@@ -550,7 +618,11 @@ export default function handleAnnotationSocket(io) {
 
         saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
 
-        const marksData = loadMarks(userId, answerPdfId, evaluatorId);
+        let marksData = { marks: [] };
+
+        if (!isHead) {
+          marksData = loadMarks(userId, answerPdfId, evaluatorId);
+        }
         console.log("marks data loaded for deletion");
 
         const existingMarksIndex = marksData.marks.findIndex(
@@ -591,11 +663,8 @@ export default function handleAnnotationSocket(io) {
           console.log("❌ Question not found in questionMarksData.json:");
         }
 
-        const questionMarksData = loadMarksData(
-          userId,
-          answerPdfId,
-          evaluatorId,
-        );
+        let questionMarksData = loadMarksData(userId, answerPdfId, evaluatorId);
+
         const existingMarksId = questionMarksData.marks.findIndex(
           (mark) => mark.questionsName === String(questionName),
         );
@@ -631,7 +700,13 @@ export default function handleAnnotationSocket(io) {
             totalMarks,
           );
 
-          saveMarksData(userId, answerPdfId, questionMarksData, evaluatorId);
+          saveMarksData(
+            userId,
+            answerPdfId,
+            questionMarksData,
+            evaluatorId,
+            isHead,
+          );
         } else {
           console.log("❌ Question not found in questionMarksData.json:");
         }
@@ -663,7 +738,13 @@ export default function handleAnnotationSocket(io) {
             };
           }
 
-          saveMarksData(userId, answerPdfId, questionMarksData, evaluatorId);
+          saveMarksData(
+            userId,
+            answerPdfId,
+            questionMarksData,
+            evaluatorId,
+            isHead,
+          );
           console.log(
             "questionMarksData after processing:",
             questionMarksData.marks[parentIndex],
@@ -785,7 +866,10 @@ export default function handleAnnotationSocket(io) {
         console.log("User Id of the comment is this -:", userId);
 
         console.log("Incoming AnswerPdf Id -:", answerPdfId);
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
         // Validate required fields
         if (!taskId || !answerPdfId || page === undefined || !commentIds) {
@@ -845,9 +929,14 @@ export default function handleAnnotationSocket(io) {
 
         const { taskId, userId, answerPdfId } = data;
 
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
-        const user = await mongoose.model("User").findById(userId).select("role");
-        const isHead = user?.role === "headEvaluator";
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
+        const user = await mongoose
+          .model("User")
+          .findById(userId)
+          .select("role");
 
         if (!answerPdfId) return;
 
@@ -856,6 +945,7 @@ export default function handleAnnotationSocket(io) {
         /* ========================================================= */
 
         if (isHead) {
+          // ✅ 1. SAVE IN DB (same as before)
           const existing = await HeadMarks.findOne({
             answerPdfId,
             questionDefinitionId: data.questionDefinitionId,
@@ -863,7 +953,7 @@ export default function handleAnnotationSocket(io) {
           });
 
           if (existing) {
-            existing.allottedMarks += data.allottedMarks || 0;
+            // existing.allottedMarks += data.allottedMarks || 0;
             existing.timerStamps = data.timeStamps;
             existing.isMarked = true;
             await existing.save();
@@ -878,9 +968,49 @@ export default function handleAnnotationSocket(io) {
             });
           }
 
-          console.log("✅ Head marks saved separately");
+          console.log("✅ Head marks saved in DB");
 
-          /* 🔁 SEND UPDATED DATA */
+          //  2. UPDATE marksData.json ALSO
+
+          let questionMarksData = loadMarksData(
+            userId,
+            answerPdfId,
+            evaluatorId,
+          );
+
+          const existingIndex = questionMarksData.marks.findIndex(
+            (m) => m._id === data.questionDefinitionId,
+          );
+
+          if (existingIndex !== -1) {
+            questionMarksData.marks[existingIndex].allottedMarks +=
+              data.allottedMarks || 0;
+            questionMarksData.marks[existingIndex].isMarked = true;
+            questionMarksData.marks[existingIndex].updatedAt =
+              new Date().toISOString();
+          } else {
+            // fallback (rare)
+            questionMarksData.marks.push({
+              _id: data.questionDefinitionId,
+              questionsName: data.question,
+              allottedMarks: data.allottedMarks || 0,
+              isMarked: true,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+
+          // 🔥 IMPORTANT → pass isHead = true
+          saveMarksData(
+            userId,
+            answerPdfId,
+            questionMarksData,
+            evaluatorId,
+            true,
+          );
+
+          console.log("Head marksData.json updated");
+
+          // 🔁 EMIT UPDATED DATA
           const headMarks = await HeadMarks.find({
             answerPdfId,
             headEvaluatorId: userId,
@@ -896,7 +1026,7 @@ export default function handleAnnotationSocket(io) {
             status: "completed",
           });
 
-          return; // 🔥 STOP NORMAL FLOW
+          return;
         }
 
         /* ========================================================= */
@@ -927,6 +1057,7 @@ export default function handleAnnotationSocket(io) {
             marksData.marks[existingMarksIndex].allottedMarks || 0;
 
           marksData.marks[existingMarksIndex] = {
+            ...marksData.marks[existingMarksIndex],
             ...marksObject,
             allottedMarks: existingMarks + marksObject.allottedMarks,
           };
@@ -958,7 +1089,13 @@ export default function handleAnnotationSocket(io) {
           };
         }
 
-        saveMarksData(userId, answerPdfId, questionMarksData, evaluatorId);
+        saveMarksData(
+          userId,
+          answerPdfId,
+          questionMarksData,
+          evaluatorId,
+          isHead,
+        );
 
         emitMarksUpdate(io, taskId, userId, answerPdfId);
 
@@ -1217,13 +1354,27 @@ export default function handleAnnotationSocket(io) {
         console.log("📊 Get questions request:", data);
 
         const { taskId, userId, answerPdfId } = data;
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
-        console.log("Evaluator Id for the head is this -:", evaluatorId)
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
-        // 🔥 GET USER ROLE
-        const user = await mongoose.model("User").findById(userId).select("role");
-        const isHead = user?.role === "headEvaluator";
-        console.log("Is Head Id is this -:", isHead)
+        const folderKey = `${userId}_${answerPdfId}`;
+
+        if (!global.clearedHeadFolders) {
+          global.clearedHeadFolders = {};
+        }
+
+        if (isHead && !global.clearedHeadFolders[folderKey]) {
+          clearHeadFolder(userId, answerPdfId, evaluatorId, socket.taskType);
+
+          global.clearedHeadFolders[folderKey] = true;
+
+          console.log("🔥 Head folder cleared ONCE");
+        }
+
+        console.log("Evaluator Id for the head is this -:", evaluatorId);
+        console.log("Is Head Id is this -:", isHead);
 
         if (!taskId || !answerPdfId) {
           throw new Error("taskId and answerPdfId are required");
@@ -1238,20 +1389,20 @@ export default function handleAnnotationSocket(io) {
         }
 
         // Check existing local marks file
-        const questionMarksData = loadMarksData(
-          userId,
-          answerPdfId,
-          evaluatorId,
-        );
+        let questionMarksData = { marks: [] };
 
-        if (questionMarksData.marks?.length > 0) {
-          socket.emit("questions-data", {
-            success: true,
-            answerPdfId,
-            marks: questionMarksData.marks,
-            status: "completed",
-          });
-          return;
+        if (!isHead) {
+          questionMarksData = loadMarksData(userId, answerPdfId, evaluatorId);
+
+          if (questionMarksData.marks?.length > 0) {
+            socket.emit("questions-data", {
+              success: true,
+              answerPdfId,
+              marks: questionMarksData.marks,
+              status: "completed",
+            });
+            return;
+          }
         }
 
         // 🔥 Detect task type
@@ -1374,8 +1525,22 @@ export default function handleAnnotationSocket(io) {
           });
         });
 
+        // if (isHead) {
+        //   const filePath = getMarksDataFilePath(
+        //     userId,
+        //     answerPdfId,
+        //     socket.taskType,
+        //     evaluatorId,
+        //   );
+
+        //   // 🔥 CLEAR FILE ON LOAD
+        //   fs.writeFileSync(filePath, JSON.stringify({ marks: [] }, null, 2));
+
+        //   console.log("🔥 Head file cleared on load");
+        // }
+
         // Save locally
-        saveMarksData(userId, answerPdfId, fileData, evaluatorId);
+        saveMarksData(userId, answerPdfId, fileData, evaluatorId, isHead);
 
         socket.emit("questions-data", {
           success: true,
@@ -1400,7 +1565,10 @@ export default function handleAnnotationSocket(io) {
 
         // Expect data to contain taskId and answerPdfId
         const { taskId, userId, answerPdfId } = data;
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
         if (answerPdfId === null || answerPdfId === undefined) {
           return { annotations: [], comments: [] };
@@ -1566,9 +1734,10 @@ export default function handleAnnotationSocket(io) {
       try {
         const { taskId, userId, answerPdfId } = data;
 
-        const evaluatorId = await getEvaluatorIdFromTask(taskId);
-        const user = await mongoose.model("User").findById(userId).select("role");
-        const isHead = user?.role === "headEvaluator";
+        const { evaluatorId, isHead } = await getEvaluatorContext(
+          taskId,
+          userId,
+        );
 
         /* ========================================================= */
         /* 🔥 HEAD FLOW                                              */
@@ -1908,10 +2077,20 @@ export default function handleAnnotationSocket(io) {
     });
 
     const emitMarksUpdate = async (io, taskId, userId, answerPdfId) => {
-      const evaluatorId = await getEvaluatorIdFromTask(taskId);
+      const { evaluatorId, isHead } = await getEvaluatorContext(taskId, userId);
 
-      const marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
-      const marksFile = loadMarks(userId, answerPdfId, evaluatorId);
+      let marksFile = { marks: [] };
+      let marksDataFile = { marks: [] };
+
+      if (!isHead) {
+        // ✅ evaluator / deputy
+        marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
+        marksFile = loadMarks(userId, answerPdfId, evaluatorId);
+      } else {
+        // 🔥 HEAD → DO NOT LOAD evaluator marks
+        marksFile = { marks: [] };
+        marksDataFile = { marks: [] };
+      }
 
       const roomName =
         socket.taskType === "booklet" ? `booklet_${taskId}` : `task_${taskId}`;
