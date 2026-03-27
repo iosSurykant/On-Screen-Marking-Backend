@@ -161,9 +161,68 @@ export default function handleAnnotationSocket(io) {
       };
     };
 
+    const resetHeadMarksToZero = (userId, answerPdfId, evaluatorId) => {
+      try {
+        // 🔹 marks.json
+        const marksFile = loadMarks(userId, answerPdfId, evaluatorId);
+
+        if (marksFile.marks?.length > 0) {
+          marksFile.marks = marksFile.marks.map((m) => ({
+            ...m,
+            allottedMarks: 0,
+          }));
+
+          saveMarks(userId, answerPdfId, marksFile, evaluatorId);
+
+          console.log("✅ Head marks.json reset to 0");
+        }
+
+        // 🔹 marksData.json
+        const marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
+
+        if (marksDataFile.marks?.length > 0) {
+          marksDataFile.marks = marksDataFile.marks.map((m) => ({
+            ...m,
+            allottedMarks: 0,
+          }));
+
+          saveMarksData(userId, answerPdfId, marksDataFile, evaluatorId, true);
+
+          console.log("✅ Head marksData.json reset to 0");
+        }
+      } catch (err) {
+        console.error("❌ Error resetting head marks:", err);
+      }
+    };
+
     // const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
     //   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
      
+    //   const headFolderPath = path.join(
+    //     String(rootDir),
+    //     String(evaluatorId),
+    //     String(answerPdfId),
+    //     String(userId),
+    //   );
+
+    //   try {
+    //     if (fs.existsSync(headFolderPath)) {
+    //       // 🔥 DELETE COMPLETE FOLDER
+    //       fs.rmSync(headFolderPath, { recursive: true, force: true });
+    //       console.log("🔥 Head folder deleted:", headFolderPath);
+    //     }
+
+    //     // 🔥 RECREATE EMPTY FOLDER
+    //     fs.mkdirSync(headFolderPath, { recursive: true });
+    //     console.log("✅ Fresh head folder created:", headFolderPath);
+    //   } catch (err) {
+    //     console.error("❌ Error clearing head folder:", err);
+    //   }
+    // };
+
+    // const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
+    //   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
+
     //   const headFolderPath = path.join(
     //     String(rootDir),
     //     String(evaluatorId),
@@ -255,7 +314,7 @@ export default function handleAnnotationSocket(io) {
 
     const saveData = (taskId, userId, answerPdfId, page, data, evaluatorId) => {
       try {
-        // 🔥 BLOCK INVALID ACCESS
+        // BLOCK INVALID ACCESS
         validateHeadAccess(userId, evaluatorId);
         const filePath = getFilePath(
           userId,
@@ -297,17 +356,9 @@ export default function handleAnnotationSocket(io) {
         );
 
         // 🔥 HEAD CASE → ALWAYS OVERWRITE FILE
-        if (isHead) {
-          console.log("🔥 HEAD → Clearing old marksData.json");
+        data.lastSaved = new Date().toISOString();
 
-          const freshData = {
-            marks: data.marks || [],
-            lastSaved: new Date().toISOString(),
-          };
-
-          fs.writeFileSync(filePath, JSON.stringify(freshData, null, 2));
-          return;
-        }
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 
         data.lastSaved = new Date().toISOString();
 
@@ -623,11 +674,7 @@ export default function handleAnnotationSocket(io) {
 
         saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
 
-        let marksData = { marks: [] };
-
-        if (!isHead) {
-          marksData = loadMarks(userId, answerPdfId, evaluatorId);
-        }
+        const marksData = loadMarks(userId, answerPdfId, evaluatorId);
         console.log("marks data loaded for deletion");
 
         const existingMarksIndex = marksData.marks.findIndex(
@@ -945,94 +992,94 @@ export default function handleAnnotationSocket(io) {
 
         if (!answerPdfId) return;
 
-        /* ========================================================= */
-        /* 🔥 HEAD EVALUATOR FLOW (SEPARATE COLLECTION)              */
-        /* ========================================================= */
+        // /* ========================================================= */
+        // /* 🔥 HEAD EVALUATOR FLOW (SEPARATE COLLECTION)              */
+        // /* ========================================================= */
 
-        if (isHead) {
-          // ✅ 1. SAVE IN DB (same as before)
-          const existing = await HeadMarks.findOne({
-            answerPdfId,
-            questionDefinitionId: data.questionDefinitionId,
-            headEvaluatorId: userId,
-          });
+        // if (isHead) {
+        //   // ✅ 1. SAVE IN DB (same as before)
+        //   const existing = await HeadMarks.findOne({
+        //     answerPdfId,
+        //     questionDefinitionId: data.questionDefinitionId,
+        //     headEvaluatorId: userId,
+        //   });
 
-          if (existing) {
-            // existing.allottedMarks += data.allottedMarks || 0;
-            existing.timerStamps = data.timeStamps;
-            existing.isMarked = true;
-            await existing.save();
-          } else {
-            await HeadMarks.create({
-              answerPdfId,
-              questionDefinitionId: data.questionDefinitionId,
-              headEvaluatorId: userId,
-              allottedMarks: data.allottedMarks || 0,
-              timerStamps: data.timeStamps,
-              isMarked: true,
-            });
-          }
+        //   if (existing) {
+        //     // existing.allottedMarks += data.allottedMarks || 0;
+        //     existing.timerStamps = data.timeStamps;
+        //     existing.isMarked = true;
+        //     await existing.save();
+        //   } else {
+        //     await HeadMarks.create({
+        //       answerPdfId,
+        //       questionDefinitionId: data.questionDefinitionId,
+        //       headEvaluatorId: userId,
+        //       allottedMarks: data.allottedMarks || 0,
+        //       timerStamps: data.timeStamps,
+        //       isMarked: true,
+        //     });
+        //   }
 
           // console.log("✅ Head marks saved in DB");
 
-          //  2. UPDATE marksData.json ALSO
+        //   //  2. UPDATE marksData.json ALSO
 
-          let questionMarksData = loadMarksData(
-            userId,
-            answerPdfId,
-            evaluatorId,
-          );
+        //   let questionMarksData = loadMarksData(
+        //     userId,
+        //     answerPdfId,
+        //     evaluatorId,
+        //   );
 
-          const existingIndex = questionMarksData.marks.findIndex(
-            (m) => m._id === data.questionDefinitionId,
-          );
+        //   const existingIndex = questionMarksData.marks.findIndex(
+        //     (m) => m._id === data.questionDefinitionId,
+        //   );
 
-          if (existingIndex !== -1) {
-            questionMarksData.marks[existingIndex].allottedMarks +=
-              data.allottedMarks || 0;
-            questionMarksData.marks[existingIndex].isMarked = true;
-            questionMarksData.marks[existingIndex].updatedAt =
-              new Date().toISOString();
-          } else {
-            // fallback (rare)
-            questionMarksData.marks.push({
-              _id: data.questionDefinitionId,
-              questionsName: data.question,
-              allottedMarks: data.allottedMarks || 0,
-              isMarked: true,
-              updatedAt: new Date().toISOString(),
-            });
-          }
+        //   if (existingIndex !== -1) {
+        //     questionMarksData.marks[existingIndex].allottedMarks +=
+        //       data.allottedMarks || 0;
+        //     questionMarksData.marks[existingIndex].isMarked = true;
+        //     questionMarksData.marks[existingIndex].updatedAt =
+        //       new Date().toISOString();
+        //   } else {
+        //     // fallback (rare)
+        //     questionMarksData.marks.push({
+        //       _id: data.questionDefinitionId,
+        //       questionsName: data.question,
+        //       allottedMarks: data.allottedMarks || 0,
+        //       isMarked: true,
+        //       updatedAt: new Date().toISOString(),
+        //     });
+        //   }
 
-          // 🔥 IMPORTANT → pass isHead = true
-          saveMarksData(
-            userId,
-            answerPdfId,
-            questionMarksData,
-            evaluatorId,
-            true,
-          );
+        //   // 🔥 IMPORTANT → pass isHead = true
+        //   saveMarksData(
+        //     userId,
+        //     answerPdfId,
+        //     questionMarksData,
+        //     evaluatorId,
+        //     true,
+        //   );
 
           // console.log("Head marksData.json updated");
 
-          // 🔁 EMIT UPDATED DATA
-          const headMarks = await HeadMarks.find({
-            answerPdfId,
-            headEvaluatorId: userId,
-          });
+        //   // 🔁 EMIT UPDATED DATA
+        //   const headMarks = await HeadMarks.find({
+        //     answerPdfId,
+        //     headEvaluatorId: userId,
+        //   });
 
-          const roomName =
-            socket.taskType === "booklet"
-              ? `booklet_${taskId}`
-              : `task_${taskId}`;
+        //   const roomName =
+        //     socket.taskType === "booklet"
+        //       ? `booklet_${taskId}`
+        //       : `task_${taskId}`;
 
-          io.to(roomName).emit("marks-updated", {
-            marks: headMarks,
-            status: "completed",
-          });
+        //   io.to(roomName).emit("marks-updated", {
+        //     marks: headMarks,
+        //     status: "completed",
+        //   });
 
-          return;
-        }
+        //   return;
+        // }
 
         /* ========================================================= */
         /* ✅ NORMAL FLOW (EVALUATOR + DEPUTY HEAD)                  */
@@ -1070,7 +1117,15 @@ export default function handleAnnotationSocket(io) {
           marksData.marks.push(marksObject);
         }
 
+        console.log(
+          "📁 MARKS PATH:",
+          getMarksFilePath(userId, answerPdfId, socket.taskType, evaluatorId),
+        );
+        console.log("📦 MARKS DATA BEFORE SAVE:", marksData);
+
         saveMarks(userId, answerPdfId, marksData, evaluatorId);
+
+        console.log("✅ MARKS SAVED FOR:", userId, "HEAD:", evaluatorId);
 
         const questionMarksData = loadMarksData(
           userId,
@@ -1370,6 +1425,14 @@ export default function handleAnnotationSocket(io) {
           global.clearedHeadFolders = {};
         }
 
+        if (isHead && !global.clearedHeadFolders[folderKey]) {
+          resetHeadMarksToZero(userId, answerPdfId, evaluatorId);
+
+        //   global.clearedHeadFolders[folderKey] = true;
+
+          console.log("🔥 Head marks reset to 0 (ONLY ONCE)");
+        }
+
         // if (isHead && !global.clearedHeadFolders[folderKey]) {
         //   clearHeadFolder(userId, answerPdfId, evaluatorId, socket.taskType);
 
@@ -1545,12 +1608,22 @@ export default function handleAnnotationSocket(io) {
         // }
 
         // Save locally
-        saveMarksData(userId, answerPdfId, fileData, evaluatorId, isHead);
+        const existingData = loadMarksData(userId, answerPdfId, evaluatorId);
+
+        // 🔥 ONLY SAVE IF FILE IS EMPTY
+        if (!existingData.marks || existingData.marks.length === 0) {
+          saveMarksData(userId, answerPdfId, fileData, evaluatorId, isHead);
+          console.log("✅ Initial marksData created");
+        } else {
+          console.log("⛔ Skipped overwrite - marksData already exists");
+        }
+
+        const latestMarksData = loadMarksData(userId, answerPdfId, evaluatorId);
 
         socket.emit("questions-data", {
           success: true,
           answerPdfId,
-          marks: fileData.marks,
+          marks: latestMarksData.marks,
           status: "completed",
         });
 
@@ -1714,16 +1787,22 @@ export default function handleAnnotationSocket(io) {
         });
 
         // Save to local file
-        saveMarksData(userId, answerPdfId, fileData, evaluatorId);
+        const existingData = loadMarksData(userId, answerPdfId, evaluatorId);
+
+        if (!existingData.marks || existingData.marks.length === 0) {
+          saveMarksData(userId, answerPdfId, fileData, evaluatorId);
+        }
         console.log(
           `✅ Saved ${fileData.marks.length} questions to local file`,
         );
+
+        const latestMarksData = loadMarksData(userId, answerPdfId, evaluatorId);
 
         // Emit back to the socket
         socket.emit("allquestions-data", {
           success: true,
           answerPdfId: answerPdfId,
-          marks: fileData.marks,
+          marks: latestMarksData.marks,
           status: "completed",
         });
       } catch (error) {
@@ -1748,17 +1827,17 @@ export default function handleAnnotationSocket(io) {
         /* 🔥 HEAD FLOW                                              */
         /* ========================================================= */
 
-        if (isHead) {
-          const headMarks = await HeadMarks.find({
-            answerPdfId,
-            headEvaluatorId: userId,
-          });
+        // if (isHead) {
+        //   const headMarks = await HeadMarks.find({
+        //     answerPdfId,
+        //     headEvaluatorId: userId,
+        //   });
 
-          return socket.emit("final-marks-data", {
-            marks: headMarks,
-            marksData: headMarks,
-          });
-        }
+        //   return socket.emit("final-marks-data", {
+        //     marks: headMarks,
+        //     marksData: headMarks,
+        //   });
+        // }
 
         /* ========================================================= */
         /* ✅ NORMAL FLOW                                            */
@@ -2088,15 +2167,8 @@ export default function handleAnnotationSocket(io) {
       let marksFile = { marks: [] };
       let marksDataFile = { marks: [] };
 
-      if (!isHead) {
-        // ✅ evaluator / deputy
-        marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
-        marksFile = loadMarks(userId, answerPdfId, evaluatorId);
-      } else {
-        // 🔥 HEAD → DO NOT LOAD evaluator marks
-        marksFile = { marks: [] };
-        marksDataFile = { marks: [] };
-      }
+      marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
+      marksFile = loadMarks(userId, answerPdfId, evaluatorId);
 
       const roomName =
         socket.taskType === "booklet" ? `booklet_${taskId}` : `task_${taskId}`;
