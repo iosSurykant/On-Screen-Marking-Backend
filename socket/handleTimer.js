@@ -132,13 +132,13 @@ export default function handleTimerSocket(io) {
     socket.on("timer-update", async (data) => {
       try {
         const { taskId, answerPdfId, remainingTime } = data;
-        console.log("🕒 Received timer update from frontend:", {
-          taskId,
-          answerPdfId,
-          remainingTime,
-        });
+        // console.log("🕒 Received timer update from frontend:", {
+        //   taskId,
+        //   answerPdfId,
+        //   remainingTime,
+        // });
 
-        console.log("Remaining time of timer from the frontend -: ", remainingTime);
+        // console.log("Remaining time of timer from the frontend -: ", remainingTime);
 
         // Ensure Redis is connected
         await connectRedis();
