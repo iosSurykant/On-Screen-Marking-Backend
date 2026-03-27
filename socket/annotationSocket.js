@@ -159,30 +159,64 @@ export default function handleAnnotationSocket(io) {
       };
     };
 
-    const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
-      const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
-
-      const headFolderPath = path.join(
-        String(rootDir),
-        String(evaluatorId),
-        String(answerPdfId),
-        String(userId),
-      );
-
+    const resetHeadMarksToZero = (userId, answerPdfId, evaluatorId) => {
       try {
-        if (fs.existsSync(headFolderPath)) {
-          // 🔥 DELETE COMPLETE FOLDER
-          fs.rmSync(headFolderPath, { recursive: true, force: true });
-          console.log("🔥 Head folder deleted:", headFolderPath);
+        // 🔹 marks.json
+        const marksFile = loadMarks(userId, answerPdfId, evaluatorId);
+
+        if (marksFile.marks?.length > 0) {
+          marksFile.marks = marksFile.marks.map((m) => ({
+            ...m,
+            allottedMarks: 0,
+          }));
+
+          saveMarks(userId, answerPdfId, marksFile, evaluatorId);
+
+          console.log("✅ Head marks.json reset to 0");
         }
 
-        // 🔥 RECREATE EMPTY FOLDER
-        fs.mkdirSync(headFolderPath, { recursive: true });
-        console.log("✅ Fresh head folder created:", headFolderPath);
+        // 🔹 marksData.json
+        const marksDataFile = loadMarksData(userId, answerPdfId, evaluatorId);
+
+        if (marksDataFile.marks?.length > 0) {
+          marksDataFile.marks = marksDataFile.marks.map((m) => ({
+            ...m,
+            allottedMarks: 0,
+          }));
+
+          saveMarksData(userId, answerPdfId, marksDataFile, evaluatorId, true);
+
+          console.log("✅ Head marksData.json reset to 0");
+        }
       } catch (err) {
-        console.error("❌ Error clearing head folder:", err);
+        console.error("❌ Error resetting head marks:", err);
       }
     };
+
+    // const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
+    //   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
+
+    //   const headFolderPath = path.join(
+    //     String(rootDir),
+    //     String(evaluatorId),
+    //     String(answerPdfId),
+    //     String(userId),
+    //   );
+
+    //   try {
+    //     if (fs.existsSync(headFolderPath)) {
+    //       // 🔥 DELETE COMPLETE FOLDER
+    //       fs.rmSync(headFolderPath, { recursive: true, force: true });
+    //       console.log("🔥 Head folder deleted:", headFolderPath);
+    //     }
+
+    //     // 🔥 RECREATE EMPTY FOLDER
+    //     fs.mkdirSync(headFolderPath, { recursive: true });
+    //     console.log("✅ Fresh head folder created:", headFolderPath);
+    //   } catch (err) {
+    //     console.error("❌ Error clearing head folder:", err);
+    //   }
+    // };
 
     const validateHeadAccess = (userId, evaluatorId) => {
       // ❌ HEAD trying to write evaluator folder
@@ -1362,12 +1396,20 @@ export default function handleAnnotationSocket(io) {
         }
 
         if (isHead && !global.clearedHeadFolders[folderKey]) {
-          clearHeadFolder(userId, answerPdfId, evaluatorId, socket.taskType);
+          resetHeadMarksToZero(userId, answerPdfId, evaluatorId);
 
           global.clearedHeadFolders[folderKey] = true;
 
-          console.log("🔥 Head folder cleared ONCE");
+          console.log("🔥 Head marks reset to 0 (ONLY ONCE)");
         }
+
+        // if (isHead && !global.clearedHeadFolders[folderKey]) {
+        //   clearHeadFolder(userId, answerPdfId, evaluatorId, socket.taskType);
+
+        //   global.clearedHeadFolders[folderKey] = true;
+
+        //   console.log("🔥 Head folder cleared ONCE");
+        // }
 
         console.log("Evaluator Id for the head is this -:", evaluatorId);
         console.log("Is Head Id is this -:", isHead);
