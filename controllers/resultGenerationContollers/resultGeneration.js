@@ -6,6 +6,7 @@ import csvToJson from "../../services/csvToJson.js";
 import convertJSONToCSV from "../../services/jsonToCsv.js";
 import Marks from "../../models/EvaluationModels/marksModel.js";
 import Task from "../../models/taskModels/taskModel.js";
+import User from "../../models/authModels/User.js";
 import AnswerPdf from "../../models/EvaluationModels/studentAnswerPdf.js";
 import QuestionDefinition from "../../models/schemeModel/questionDefinitionSchema.js";
 import { __dirname } from "../../server.js";
@@ -191,7 +192,7 @@ const generateResult = async (req, res) => {
       return res.status(400).json({ message: "No CSV file uploaded." });
     }
 
-    /* ------------------------------------------------------------ */
+    /* ------------------------------------------------------------- */
     /* 📁 CREATE REQUIRED FOLDERS                                   */
     /* ------------------------------------------------------------ */
 
@@ -214,7 +215,7 @@ const generateResult = async (req, res) => {
     fs.writeFileSync(tempCsvPath, fs.readFileSync(uploadedCsv.path));
 
     const csvData = await csvToJson(tempCsvPath);
-
+    
     /* ------------------------------------------------------------ */
     /* 1️⃣ SUBJECT → RELATION → SCHEMA                              */
     /* ------------------------------------------------------------ */
@@ -292,86 +293,94 @@ async function generateQuestionWiseResult({
     "userId",
     "email",
   );
-
   if (tasks.length === 0) {
     return res.status(404).json({ message: "No tasks found." });
   }
-
+  
   const uniqueQuestions = new Set(
     tasks.map((t) => t.questiondefinitionId.toString()),
   );
-
+  
   if (uniqueQuestions.size !== totalQuestions) {
     return res.status(400).json({
       message: "All questions are not assigned yet.",
     });
   }
-
+  
   const taskIds = tasks.map((t) => t._id);
-
+  
   const allAnswerPdfs = await AnswerPdf.find({
     taskId: { $in: taskIds },
   });
-
+  
   if (!allAnswerPdfs.length) {
     return res.status(404).json({ message: "No booklets found." });
   }
-
+  
   const allAnswerPdfIds = allAnswerPdfs.map((pdf) => pdf._id);
-
+  // console.log(allAnswerPdfIds)
   const allMarks = await Marks.find({
     answerPdfId: { $in: allAnswerPdfIds },
   }).populate("questionDefinitionId", "questionsName");
+  
+const taskIdss = allAnswerPdfs.map(item => item.taskId.toString());
 
+const filteredTasks = tasks.filter(task =>
+  taskIdss.includes(task._id.toString())
+);
+
+// console.log(filteredTasks);
+
+  
   const bookletMap = {};
-
+  
   for (const pdf of allAnswerPdfs) {
     const barcode = pdf.answerPdfName.replace(".pdf", "");
-
+    
     if (!bookletMap[barcode]) bookletMap[barcode] = {};
-
+    
     bookletMap[barcode][pdf.taskId.toString()] = pdf;
   }
-
+  
   const validBarcodes = [];
-
+  
   for (const barcode in bookletMap) {
     const taskWiseMap = bookletMap[barcode];
-
+    
     let isComplete = true;
-
-    for (const task of tasks) {
+    
+    for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
-
       if (!pdf || String(pdf.status) !== "true") {
         isComplete = false;
         break;
       }
-
+      
       const marksExist = allMarks.some(
         (m) =>
           m.answerPdfId.toString() === pdf._id.toString() &&
-          m.questionDefinitionId._id.toString() ===
-            task.questiondefinitionId.toString(),
+        m.questionDefinitionId._id.toString() ===
+        task.questiondefinitionId.toString(),
       );
-
+      
       if (!marksExist) {
         isComplete = false;
         break;
       }
     }
-
+    
     if (isComplete) validBarcodes.push(barcode);
   }
-
+  
   const generatingResults = validBarcodes.map((barcode) => {
     let totalMarks = 0;
     let questionWiseMarks = {};
     let evaluatedBySet = new Set();
-
+    
     const taskWiseMap = bookletMap[barcode];
+    console.log(taskWiseMap)
 
-    for (const task of tasks) {
+    for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
 
       const marks = allMarks.filter(
@@ -1049,9 +1058,9 @@ const downloadCompletedBooklets = async (req, res) => {
 
       booklets = await AnswerPdf.find({
         taskId: { $in: taskIds },
-        status: "true",
       });
 
+      // console.log('SECC++++++++++++',booklets)
       annotationFolder = "Annotations";
     }
 
@@ -1070,6 +1079,14 @@ const downloadCompletedBooklets = async (req, res) => {
       console.log("Booklets found for booklet-wise schema:", booklets);
 
       annotationFolder = "BookletAnnotations";
+    }
+
+    for (const booklet of booklets) {
+      if (booklet.status === "false") {
+        return res.status(404).json({
+          message: "All questions are not evaluated",
+        });
+      }
     }
 
     if (!booklets.length) {
@@ -1097,193 +1114,622 @@ const downloadCompletedBooklets = async (req, res) => {
     /* ------------------------------------------ */
 
     const checkIconBytes = fs.readFileSync(
-      path.join(process.cwd(), "check.png"),
+      path.join(process.cwd(), "Red_Check.png"),
     );
     const closeIconBytes = fs.readFileSync(
-      path.join(process.cwd(), "close.png"),
+      path.join(process.cwd(), "Black_Check.png"),
     );
 
     /* ------------------------------------------ */
     /* 4️⃣ PROCESS EACH BOOKLET                   */
     /* ------------------------------------------ */
+    if (schemaType === "booklet_wise") {
+      for (const booklet of booklets) {
+        const imageFolder = path.join(
+          "processedFolder",
+          subjectCode,
+          "bookletWiseExtracted",
+          booklet.answerPdfName.replace(".pdf", ""),
+        );
 
-    for (const booklet of booklets) {
-      const imageFolder = path.join(
-        "processedFolder",
-        subjectCode,
-        "bookletWiseExtracted",
-        booklet.answerPdfName.replace(".pdf", ""),
-      );
+        if (!fs.existsSync(imageFolder)) {
+          console.log("Image folder not found:", imageFolder);
+          continue;
+        }
 
-      if (!fs.existsSync(imageFolder)) {
-        console.log("Image folder not found:", imageFolder);
-        continue;
-      }
+        const imageFiles = fs
+          .readdirSync(imageFolder)
+          .filter((f) => f.endsWith(".png"))
+          .sort((a, b) => {
+            const n1 = Number(a.match(/\d+/)[0]);
+            const n2 = Number(b.match(/\d+/)[0]);
+            return n1 - n2;
+          });
 
-      const imageFiles = fs
-        .readdirSync(imageFolder)
-        .filter((f) => f.endsWith(".png"))
-        .sort((a, b) => {
-          const n1 = Number(a.match(/\d+/)[0]);
-          const n2 = Number(b.match(/\d+/)[0]);
-          return n1 - n2;
+        const pdfDoc = await PDFDocument.create();
+
+        const checkIcon = await pdfDoc.embedPng(checkIconBytes);
+        const closeIcon = await pdfDoc.embedPng(closeIconBytes);
+
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+        let summaryData = [];
+        let totalMarks = 0;
+
+        const task = await BookletTask.findById(booklet.bookletTaskId);
+        const userId = task.userId;
+
+        const annotationPath = path.join(
+          "BookletAnnotations",
+          String(userId),
+          String(booklet._id),
+        );
+
+        let annotationMap = {};
+
+        if (fs.existsSync(annotationPath)) {
+          const jsonFiles = fs
+            .readdirSync(annotationPath)
+            .filter((f) => f.startsWith("page_") && f.endsWith(".json"));
+
+          for (const file of jsonFiles) {
+            const pageNumber = Number(file.match(/\d+/)[0]);
+            const json = JSON.parse(
+              fs.readFileSync(path.join(annotationPath, file), "utf8"),
+            );
+
+            annotationMap[pageNumber] = json.annotations || [];
+          }
+        }
+
+        for (let i = 0; i < imageFiles.length; i++) {
+          const imageName = imageFiles[i];
+          const pageNumber = Number(imageName.match(/\d+/)[0]);
+
+          const imagePath = path.join(imageFolder, imageName);
+
+          const imgBytes = fs.readFileSync(imagePath);
+          const png = await pdfDoc.embedPng(imgBytes);
+
+          const page = pdfDoc.addPage([png.width, png.height]);
+
+          page.drawImage(png, {
+            x: 0,
+            y: 0,
+            width: png.width,
+            height: png.height,
+          });
+
+          const jsonPath = path.join(annotationPath, `page_${pageNumber}.json`);
+
+          if (!fs.existsSync(jsonPath)) continue;
+
+          const json = JSON.parse(fs.readFileSync(jsonPath));
+          const annotations = json.annotations || [];
+
+          for (const a of annotations) {
+            const icon =
+              a.iconUrl && a.iconUrl.includes("check") ? checkIcon : closeIcon;
+
+            //---------- Icon Size ----------
+            page.drawImage(icon, {
+              x: Number(a.x),
+              y: Number(a.y),
+              width: 50,
+              height: 50,
+            });
+
+            //---------- Question Text Size ----------
+            page.drawText(`Q${a.question}`, {
+              x: Number(a.x) + 20,
+              y: Number(a.y) + 8,
+              size: 12,
+              font,
+            });
+
+            //----------Mark Circle Size ------------
+            page.drawCircle({
+              x: Number(a.x) + 130,
+              y: Number(a.y) + 25,
+              size: 10,
+              borderColor: rgb(0, 0.6, 0),
+              borderWidth: 2,
+            });
+
+            //----------Mark Text Size ------------
+            page.drawText(String(a.mark), {
+              x: Number(a.x) + 123,
+              y: Number(a.y) + 17,
+              size: 10,
+              font,
+            });
+
+            summaryData.push({
+              question: `Q${a.question}`,
+              marks: a.mark,
+              page: pageNumber,
+              time: a.timeStamps || "",
+            });
+
+            totalMarks += Number(a.mark);
+          }
+        }
+
+        /* SUMMARY PAGE */
+
+        const summaryPage = pdfDoc.addPage();
+
+        const { width, height } = summaryPage.getSize();
+
+        summaryPage.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
+          x: 50,
+          y: height - 40,
+          size: 18,
+          font: fontBold,
         });
 
-      const pdfDoc = await PDFDocument.create();
+        let y = height - 80;
 
-      const checkIcon = await pdfDoc.embedPng(checkIconBytes);
-      const closeIcon = await pdfDoc.embedPng(closeIconBytes);
-
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-      let summaryData = [];
-      let totalMarks = 0;
-
-      const task = await BookletTask.findById(booklet.bookletTaskId);
-      const userId = task.userId;
-
-      const annotationPath = path.join(
-        "BookletAnnotations",
-        String(userId),
-        String(booklet._id),
-      );
-
-      let annotationMap = {};
-
-      if (fs.existsSync(annotationPath)) {
-        const jsonFiles = fs
-          .readdirSync(annotationPath)
-          .filter((f) => f.startsWith("page_") && f.endsWith(".json"));
-
-        for (const file of jsonFiles) {
-          const pageNumber = Number(file.match(/\d+/)[0]);
-          const json = JSON.parse(
-            fs.readFileSync(path.join(annotationPath, file), "utf8"),
-          );
-
-          annotationMap[pageNumber] = json.annotations || [];
-        }
-      }
-
-      for (let i = 0; i < imageFiles.length; i++) {
-        const imageName = imageFiles[i];
-        const pageNumber = Number(imageName.match(/\d+/)[0]);
-
-        const imagePath = path.join(imageFolder, imageName);
-
-        const imgBytes = fs.readFileSync(imagePath);
-        const png = await pdfDoc.embedPng(imgBytes);
-
-        const page = pdfDoc.addPage([png.width, png.height]);
-
-        page.drawImage(png, {
-          x: 0,
-          y: 0,
-          width: png.width,
-          height: png.height,
+        summaryPage.drawText("Question", {
+          x: 50,
+          y,
+          size: 13,
+          font: fontBold,
         });
-
-        const jsonPath = path.join(annotationPath, `page_${pageNumber}.json`);
-
-        if (!fs.existsSync(jsonPath)) continue;
-
-        const json = JSON.parse(fs.readFileSync(jsonPath));
-        const annotations = json.annotations || [];
-
-        for (const a of annotations) {
-          const icon =
-            a.iconUrl && a.iconUrl.includes("check") ? checkIcon : closeIcon;
-
-          //---------- Icon Size ----------
-          page.drawImage(icon, {
-            x: Number(a.x),
-            y: Number(a.y),
-            width: 50,
-            height: 50,
-          });
-
-          //---------- Question Text Size ----------
-          page.drawText(`Q${a.question}`, {
-            x: Number(a.x) + 20,
-            y: Number(a.y) + 8,
-            size: 12,
-            font,
-          });
-
-          //----------Mark Circle Size ------------
-          page.drawCircle({
-            x: Number(a.x) + 130,
-            y: Number(a.y) + 25,
-            size: 10,
-            borderColor: rgb(0, 0.6, 0),
-            borderWidth: 2,
-          });
-
-          //----------Mark Text Size ------------
-          page.drawText(String(a.mark), {
-            x: Number(a.x) + 123,
-            y: Number(a.y) + 17,
-            size: 10,
-            font,
-          });
-
-          summaryData.push({
-            question: `Q${a.question}`,
-            marks: a.mark,
-            page: pageNumber,
-            time: a.timeStamps || "",
-          });
-
-          totalMarks += Number(a.mark);
-        }
-      }
-
-      /* SUMMARY PAGE */
-
-      const summaryPage = pdfDoc.addPage();
-
-      const { width, height } = summaryPage.getSize();
-
-      summaryPage.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
-        x: 50,
-        y: height - 40,
-        size: 18,
-        font: fontBold,
-      });
-
-      let y = height - 80;
-
-      summaryPage.drawText("Question", { x: 50, y, font: fontBold });
-      summaryPage.drawText("Marks", { x: 150, y, font: fontBold });
-      summaryPage.drawText("Page", { x: 250, y, font: fontBold });
-      summaryPage.drawText("Time", { x: 350, y, font: fontBold });
-
-      y -= 20;
-
-      for (const row of summaryData) {
-        summaryPage.drawText(row.question, { x: 50, y, size: 11, font });
-        summaryPage.drawText(String(row.marks), { x: 150, y, size: 11, font });
-        summaryPage.drawText(String(row.page), { x: 250, y, size: 11, font });
-        summaryPage.drawText(row.time, { x: 350, y, size: 11, font });
+        summaryPage.drawText("Marks", { x: 150, y, size: 13, font: fontBold });
+        summaryPage.drawText("Page", { x: 250, y, size: 13, font: fontBold });
+        summaryPage.drawText("Time", { x: 350, y, size: 13, font: fontBold });
 
         y -= 20;
+
+        for (const row of summaryData) {
+          summaryPage.drawText(row.question, { x: 50, y, size: 11, font });
+          summaryPage.drawText(String(row.marks), {
+            x: 150,
+            y,
+            size: 11,
+            font,
+          });
+          summaryPage.drawText(String(row.page), { x: 250, y, size: 11, font });
+          summaryPage.drawText(row.time, { x: 350, y, size: 11, font });
+
+          y -= 20;
+        }
+
+        summaryPage.drawText(`Total Marks: ${totalMarks}`, {
+          x: width - 200,
+          y: y - 10,
+          size: 14,
+          font: fontBold,
+        });
+
+        const finalBytes = await pdfDoc.save();
+
+        archive.append(Buffer.from(finalBytes), {
+          name: booklet.answerPdfName,
+        });
+      }
+    } else {
+      const grouped = {};
+
+      booklets.forEach((doc) => {
+        if (!grouped[doc.answerPdfName]) {
+          grouped[doc.answerPdfName] = {
+            answerPdfName: doc.answerPdfName,
+            documents: [],
+          };
+        }
+
+        grouped[doc.answerPdfName].documents.push({
+          _id: doc._id,
+          taskId: doc.taskId,
+          questionDefinitionId: doc.questiondefinitionId,
+        });
+      });
+
+      const result = Object.values(grouped);
+
+      for (const booklet of result) {
+        console.log(booklet);
+        const imageFolder = path.join(
+          "processedFolder",
+          subjectCode,
+          "extractedBooklets",
+          booklet.answerPdfName.replace(".pdf", ""),
+        );
+
+        if (!fs.existsSync(imageFolder)) {
+          console.log("Image folder not found:", imageFolder);
+          continue;
+        }
+
+        const imageFiles = fs
+          .readdirSync(imageFolder)
+          .filter((f) => f.endsWith(".png"))
+          .sort((a, b) => {
+            const n1 = Number(a.match(/\d+/)[0]);
+            const n2 = Number(b.match(/\d+/)[0]);
+            return n1 - n2;
+          });
+
+        const pdfDoc = await PDFDocument.create();
+
+        const checkIcon = await pdfDoc.embedPng(checkIconBytes);
+        const closeIcon = await pdfDoc.embedPng(closeIconBytes);
+
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+        let summaryData = [];
+        let totalMarks = 0;
+
+        // for (const value of booklet.documents) {
+        //   const task = await Task.findById(value.taskId);
+        //   const userId = task.userId;
+        //   console.log(userId);
+        //   let annotationPath;
+
+        //   if (task.evaluatorId) {
+        //     annotationPath = path.join(
+        //       "Annotations",
+        //       String(task.evaluatorId),
+        //       String(value._id),
+        //       String(userId),
+        //     );
+        //   } else {
+        //     annotationPath = path.join(
+        //       "Annotations",
+        //       String(userId),
+        //       String(value._id),
+        //     );
+        //   }
+
+        for (let i = 0; i < imageFiles.length; i++) {
+          const imageName = imageFiles[i];
+          const pageNumber = Number(imageName.match(/\d+/)[0]);
+
+          const imagePath = path.join(imageFolder, imageName);
+          const imgBytes = fs.readFileSync(imagePath);
+          const png = await pdfDoc.embedPng(imgBytes);
+
+          const page = pdfDoc.addPage([png.width, png.height]);
+
+          page.drawImage(png, {
+            x: 0,
+            y: 0,
+            width: png.width,
+            height: png.height,
+          });
+
+          // 🔥 LOOP DOCUMENTS INSIDE PAGE
+          for (const value of booklet.documents) {
+            // console.log(value)
+            const task = await Task.findById(value.taskId);
+            const userId = task.userId;
+
+            const userRole = await User.findById(userId);
+            const questionDef = await QuestionDefinition.findById(
+              value.questionDefinitionId,
+            );
+            // console.log(questionDef)
+
+            let annotationPath;
+
+            if (userRole?.role === "headevaluator") {
+              annotationPath = path.join(
+                "Annotations",
+                String(task.evaluatorId),
+                String(value._id),
+                String(userId),
+              );
+            } else {
+              annotationPath = path.join(
+                "Annotations",
+                String(userId),
+                String(value._id),
+              );
+            }
+
+            const jsonPath = path.join(
+              annotationPath,
+              `page_${pageNumber}.json`,
+            );
+
+            if (!fs.existsSync(jsonPath)) continue;
+
+            const json = JSON.parse(fs.readFileSync(jsonPath));
+            const annotations = json.annotations || [];
+            // console.log( annotations)
+
+            let displacement;
+
+            if (
+              questionDef.page.includes(pageNumber) &&
+              questionDef.coordinates.partialAreas &&
+              questionDef.coordinates.partialAreas.hasOwnProperty(pageNumber)
+            ) {
+              console.log("trueeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+              displacement =
+                questionDef.coordinates.partialAreas[pageNumber][0];
+            } else {
+              console.log("falseeeeeeeeeeeeeeeeeeeeeeeeeee");
+              displacement = { x: 0, y: 0 };
+            }
+            for (const a of annotations) {
+              const icon =
+                a.iconUrl && a.iconUrl.includes("Red") ? checkIcon : closeIcon;
+
+              page.drawImage(icon, {
+                x: Number(a.x) + displacement.x,
+                y: Number(a.y) + displacement.y,
+                width: a.width,
+                height: a.height,
+              });
+
+              page.drawText(`Q${a.question}`, {
+                x: Number(a.x) + displacement.x + 1,
+                y: Number(a.y) + displacement.y - 10,
+                size: 12,
+                font,
+              });
+
+              page.drawCircle({
+                x: Number(a.x) + displacement.x + 55,
+                y: Number(a.y) + displacement.y - 9,
+                size: 10,
+                borderColor: rgb(0, 0.6, 0),
+                borderWidth: 2,
+              });
+
+              page.drawText(String(a.mark), {
+                x: Number(a.x) + displacement.x + 55,
+                y: Number(a.y) + displacement.y - 13,
+                size: 12,
+                font,
+              });
+
+              summaryData.push({
+                question: `Q${a.question}`,
+                marks: a.mark,
+                page: pageNumber,
+                time: a.timeStamps || "",
+              });
+
+              totalMarks += Number(a.mark);
+            }
+          }
+        }
+        const summaryPage = pdfDoc.addPage();
+
+        const { width, height } = summaryPage.getSize();
+
+        summaryPage.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
+          x: 50,
+          y: height - 40,
+          size: 18,
+          font: fontBold,
+        });
+
+        let y = height - 80;
+
+        summaryPage.drawText("Question", { x: 50, y, font: fontBold });
+        summaryPage.drawText("Marks", { x: 150, y, font: fontBold });
+        summaryPage.drawText("Page", { x: 250, y, font: fontBold });
+        summaryPage.drawText("Time", { x: 350, y, font: fontBold });
+
+        y -= 20;
+
+        for (const row of summaryData) {
+          summaryPage.drawText(row.question, { x: 50, y, size: 11, font });
+          summaryPage.drawText(String(row.marks), {
+            x: 150,
+            y,
+            size: 11,
+            font,
+          });
+          summaryPage.drawText(String(row.page), { x: 250, y, size: 11, font });
+          summaryPage.drawText(row.time, { x: 350, y, size: 11, font });
+
+          y -= 20;
+        }
+
+        summaryPage.drawText(`Total Marks: ${totalMarks}`, {
+          x: width - 200,
+          y: y - 10,
+          size: 14,
+          font: fontBold,
+        });
+
+        const finalBytes = await pdfDoc.save();
+
+        archive.append(Buffer.from(finalBytes), {
+          name: booklet.answerPdfName,
+        });
       }
 
-      summaryPage.drawText(`Total Marks: ${totalMarks}`, {
-        x: width - 200,
-        y: y - 10,
-        size: 14,
-        font: fontBold,
-      });
+      // for (const booklet of booklets) {
+      //   const imageFolder = path.join(
+      //     "processedFolder",
+      //     subjectCode,
+      //     "extractedBooklets",
+      //     booklet.answerPdfName.replace(".pdf", ""),
+      //   );
 
-      const finalBytes = await pdfDoc.save();
+      //   if (!fs.existsSync(imageFolder)) {
+      //     console.log("Image folder not found:", imageFolder);
+      //     continue;
+      //   }
 
-      archive.append(Buffer.from(finalBytes), {
-        name: booklet.answerPdfName,
-      });
+      //   const imageFiles = fs
+      //     .readdirSync(imageFolder)
+      //     .filter((f) => f.endsWith(".png"))
+      //     .sort((a, b) => {
+      //       const n1 = Number(a.match(/\d+/)[0]);
+      //       const n2 = Number(b.match(/\d+/)[0]);
+      //       return n1 - n2;
+      //     });
+
+      //   const pdfDoc = await PDFDocument.create();
+
+      //   const checkIcon = await pdfDoc.embedPng(checkIconBytes);
+      //   const closeIcon = await pdfDoc.embedPng(closeIconBytes);
+
+      //   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      //   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      //   let summaryData = [];
+      //   let totalMarks = 0;
+
+      //   const task = await Task.findById(booklet.taskId);
+      //   const userId = task.userId;
+
+      //   const annotationPath = path.join(
+      //     "Annotations",
+      //     String(userId),
+      //     String(booklet._id),
+      //   );
+
+      //   // let annotationMap = {};
+
+      //   // if (fs.existsSync(annotationPath)) {
+      //   //   const jsonFiles = fs
+      //   //     .readdirSync(annotationPath)
+      //   //     .filter((f) => f.startsWith("page_") && f.endsWith(".json"));
+
+      //   //   for (const file of jsonFiles) {
+      //   //     const pageNumber = Number(file.match(/\d+/)[0]);
+      //   //     const json = JSON.parse(
+      //   //       fs.readFileSync(path.join(annotationPath, file), "utf8"),
+      //   //     );
+
+      //   //     annotationMap[pageNumber] = json.annotations || [];
+      //   //     // console.log(`LAAAAAAAAAAAAAAAA`, annotationMap)
+      //   //   }
+      //   // }
+      //   for (let i = 0; i < imageFiles.length; i++) {
+      //     const imageName = imageFiles[i];
+      //     const pageNumber = Number(imageName.match(/\d+/)[0]);
+
+      //     const imagePath = path.join(imageFolder, imageName);
+      //     const imgBytes = fs.readFileSync(imagePath);
+      //     const png = await pdfDoc.embedPng(imgBytes);
+
+      //     const page = pdfDoc.addPage([png.width, png.height]);
+
+      //     page.drawImage(png, {
+      //       x: 0,
+      //       y: 0,
+      //       width: png.width,
+      //       height: png.height,
+      //     });
+
+      //     const jsonPath = path.join(annotationPath, `page_${pageNumber}.json`);
+
+      //     if (!fs.existsSync(jsonPath)) continue;
+
+      //     const json = JSON.parse(fs.readFileSync(jsonPath));
+      //     // console.log(json)
+      //     const annotations = json.annotations || [];
+      //     // console.log("1375", annotations);
+
+      //     for (const a of annotations) {
+      //       const icon =
+      //         a.iconUrl && a.iconUrl.includes("Red") ? checkIcon : closeIcon;
+      //       // console.log('1380',icon)
+      //       //---------- Icon Size ----------
+      //       page.drawImage(icon, {
+      //         x: Number(a.x),
+      //         y: Number(a.y),
+      //         width: 50,
+      //         height: 50,
+      //       });
+
+      //       //---------- Question Text Size ----------
+      //       page.drawText(`Q${a.question}`, {
+      //         x: Number(a.x) + 20,
+      //         y: Number(a.y) + 8,
+      //         size: 12,
+      //         font,
+      //       });
+
+      //       //----------Mark Circle Size ------------
+      //       page.drawCircle({
+      //         x: Number(a.x) + 130,
+      //         y: Number(a.y) + 25,
+      //         size: 10,
+      //         borderColor: rgb(0, 0.6, 0),
+      //         borderWidth: 2,
+      //       });
+
+      //       //----------Mark Text Size ------------
+      //       page.drawText(String(a.mark), {
+      //         x: Number(a.x) + 123,
+      //         y: Number(a.y) + 17,
+      //         size: 10,
+      //         font,
+      //       });
+
+      //       summaryData.push({
+      //         question: `Q${a.question}`,
+      //         marks: a.mark,
+      //         page: pageNumber,
+      //         time: a.timeStamps || "",
+      //       });
+
+      //       totalMarks += Number(a.mark);
+      //     }
+      //   }
+      //   /* SUMMARY PAGE */
+
+      //   const summaryPage = pdfDoc.addPage();
+
+      //   const { width, height } = summaryPage.getSize();
+
+      //   summaryPage.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
+      //     x: 50,
+      //     y: height - 40,
+      //     size: 18,
+      //     font: fontBold,
+      //   });
+
+      //   let y = height - 80;
+
+      //   summaryPage.drawText("Question", { x: 50, y, font: fontBold });
+      //   summaryPage.drawText("Marks", { x: 150, y, font: fontBold });
+      //   summaryPage.drawText("Page", { x: 250, y, font: fontBold });
+      //   summaryPage.drawText("Time", { x: 350, y, font: fontBold });
+
+      //   y -= 20;
+
+      //   for (const row of summaryData) {
+      //     summaryPage.drawText(row.question, { x: 50, y, size: 11, font });
+      //     summaryPage.drawText(String(row.marks), {
+      //       x: 150,
+      //       y,
+      //       size: 11,
+      //       font,
+      //     });
+      //     summaryPage.drawText(String(row.page), { x: 250, y, size: 11, font });
+      //     summaryPage.drawText(row.time, { x: 350, y, size: 11, font });
+
+      //     y -= 20;
+      //   }
+
+      //   summaryPage.drawText(`Total Marks: ${totalMarks}`, {
+      //     x: width - 200,
+      //     y: y - 10,
+      //     size: 14,
+      //     font: fontBold,
+      //   });
+
+      //   const finalBytes = await pdfDoc.save();
+
+      //   archive.append(Buffer.from(finalBytes), {
+      //     name: booklet.answerPdfName,
+      //   });
+      // }
     }
-
     await archive.finalize();
   } catch (error) {
     console.error("Download error:", error);

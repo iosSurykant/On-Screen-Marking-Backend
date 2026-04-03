@@ -3787,6 +3787,11 @@ const getAssignTaskById = async (req, res) => {
     // Get assigned PDFs
     const assignedPdfs = await AnswerPdf.find({ taskId: task._id });
 
+    if (assignedPdfs.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No PDFs assigned to this task." });
+    }
     // Update pending PDFs to "progress"
     await AnswerPdf.updateMany(
       {
@@ -3796,12 +3801,6 @@ const getAssignTaskById = async (req, res) => {
       },
       { $set: { status: "progress" } },
     );
-
-    if (assignedPdfs.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No PDFs assigned to this task." });
-    }
 
     console.log(`📊 TOTAL PDFS ASSIGNED: ${assignedPdfs.length}`);
 
@@ -3816,6 +3815,7 @@ const getAssignTaskById = async (req, res) => {
     console.log(`📁 Current File Index: ${task.currentFileIndex}`);
 
     const pdfPath = path.join(subjectFolder, currentPdf.answerPdfName);
+
     if (!fs.existsSync(pdfPath)) {
       return res.status(404).json({
         message: `PDF file ${currentPdf.answerPdfName} not found.`,
@@ -3825,6 +3825,7 @@ const getAssignTaskById = async (req, res) => {
     const bookletName = path.basename(currentPdf.answerPdfName, ".pdf");
 
     const currentPdfFolder = path.join(extractedBookletsFolder, bookletName);
+    // console.log('FILE PATH IN DOUBT ',currentPdfFolder)
 
     let extractedBookletPath = `processedFolder/${task.subjectCode}/extractedBooklets/${bookletName}`;
 
@@ -5282,8 +5283,11 @@ const completedBookletHandler = async (req, res) => {
 
     console.log("taskId", taskId);
 
-    const taskData = await Task.findById(taskId).select("subjectCode").lean();
-
+    const taskData = await Task.findById(taskId)
+      .select("subjectCode evaluatorId")
+      .lean();
+    const userRole = await User.findById(userId).select("role").lean();
+    console.log("USER ROLE", taskData);
     const subjectCode = taskData?.subjectCode;
 
     console.log("subjectCode", subjectCode);
@@ -5413,12 +5417,22 @@ const completedBookletHandler = async (req, res) => {
 
     console.log("Starting sync for booklet:", answerpdfid);
 
-    const folderPath = path.join(
-      "Annotations",
-      String(userId),
-      String(answerpdfid),
-    );
-
+    let folderPath;
+    if (userRole === "headevaluator") {
+      folderPath = path.join(
+        "Annotations",
+        String(taskData.evaluatorId),
+        String(answerpdfid),
+        String(userId),
+      );
+    } else {
+      folderPath = path.join(
+        "Annotations",
+        String(userId),
+        String(answerpdfid),
+      );
+    }
+    console.log(folderPath);
     if (!fs.existsSync(folderPath)) {
       return res.status(404).json({
         success: false,
@@ -6214,37 +6228,34 @@ const assignHeadEvaluatorTask = async (req, res) => {
         const basePdfPath = path.join(
           baseDataDir,
           String(evaluatorId),
-          String(pdf._id)
+          String(pdf._id),
         );
-      
-        const targetPath = path.join(
-          basePdfPath,
-          String(headEvaluatorId)
-        );
-      
+
+        const targetPath = path.join(basePdfPath, String(headEvaluatorId));
+
         console.log("📂 BASE PATH:", basePdfPath);
         console.log("📂 TARGET PATH:", targetPath);
-      
+
         if (!fs.existsSync(basePdfPath)) {
           console.log("❌ Base path not found, skipping...");
           continue;
         }
-      
+
         // 🔥 STEP 1: CLEAN OLD FOLDERS (IMPORTANT)
         cleanChildFolders(basePdfPath, headEvaluatorId);
-      
+
         // 🔥 STEP 2: CREATE HEAD FOLDER
         if (!fs.existsSync(targetPath)) {
           fs.mkdirSync(targetPath, { recursive: true });
         }
-      
+
         // 🔥 STEP 3: COPY ONLY JSON FILES
         const files = fs.readdirSync(basePdfPath);
-      
+
         for (const file of files) {
           const srcPath = path.join(basePdfPath, file);
           const destPath = path.join(targetPath, file);
-        
+
           if (fs.lstatSync(srcPath).isFile() && file.endsWith(".json")) {
             fs.copyFileSync(srcPath, destPath);
           }
@@ -6259,7 +6270,7 @@ const assignHeadEvaluatorTask = async (req, res) => {
             status: "progress",
           },
         },
-        { session }
+        { session },
       );
 
       sourceTask.totalBooklets -= pdfs.length;

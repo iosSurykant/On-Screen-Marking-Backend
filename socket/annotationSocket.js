@@ -265,6 +265,7 @@ export default function handleAnnotationSocket(io) {
         evaluatorId,
       );
       console.log('LOGGING THE PATH ', filePath)
+      // console.log('LOGGING THE FILEDATA ', JSON.parse(fs.readFileSync(filePath, "utf-8")))
       if (fs.existsSync(filePath)) {
         try {
           return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -1425,13 +1426,15 @@ export default function handleAnnotationSocket(io) {
           global.clearedHeadFolders = {};
         }
 
+
         if (isHead && !global.clearedHeadFolders[folderKey]) {
           resetHeadMarksToZero(userId, answerPdfId, evaluatorId);
 
-        //   global.clearedHeadFolders[folderKey] = true;
+          global.clearedHeadFolders[folderKey] = true;
 
           console.log("🔥 Head marks reset to 0 (ONLY ONCE)");
         }
+       
 
         // if (isHead && !global.clearedHeadFolders[folderKey]) {
         //   clearHeadFolder(userId, answerPdfId, evaluatorId, socket.taskType);
@@ -1868,7 +1871,7 @@ export default function handleAnnotationSocket(io) {
         const marksFile = loadMarks(userId, evaluatorId, answerPdfId);
         const marksDataFile = loadMarksData(userId, evaluatorId, answerPdfId);
         const fileData = loadData(userId, evaluatorId, answerPdfId, page);
-        
+        // console.log('FILEDATAAAAAAAAAA', fileData)
 
         // ✅ SEND only (NO COPYING)
         socket.emit("page-data-loaded", fileData);
