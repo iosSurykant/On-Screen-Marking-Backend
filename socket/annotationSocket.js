@@ -31,6 +31,7 @@ export function getFilePath(
   page,
   taskType = "question",
   evaluatorId = null,
+
 ) {
   console.log("🧩 getFilePath called with:", {
     userId,
@@ -38,6 +39,7 @@ export function getFilePath(
     page,
     baseDataDir,
     evaluatorId,
+    
   });
 
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
@@ -195,6 +197,31 @@ export default function handleAnnotationSocket(io) {
 
     // const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
     //   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
+     
+    //   const headFolderPath = path.join(
+    //     String(rootDir),
+    //     String(evaluatorId),
+    //     String(answerPdfId),
+    //     String(userId),
+    //   );
+
+    //   try {
+    //     if (fs.existsSync(headFolderPath)) {
+    //       // 🔥 DELETE COMPLETE FOLDER
+    //       fs.rmSync(headFolderPath, { recursive: true, force: true });
+    //       console.log("🔥 Head folder deleted:", headFolderPath);
+    //     }
+
+    //     // 🔥 RECREATE EMPTY FOLDER
+    //     fs.mkdirSync(headFolderPath, { recursive: true });
+    //     console.log("✅ Fresh head folder created:", headFolderPath);
+    //   } catch (err) {
+    //     console.error("❌ Error clearing head folder:", err);
+    //   }
+    // };
+
+    // const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
+    //   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
 
     //   const headFolderPath = path.join(
     //     String(rootDir),
@@ -237,6 +264,8 @@ export default function handleAnnotationSocket(io) {
         socket.taskType,
         evaluatorId,
       );
+      console.log('LOGGING THE PATH ', filePath)
+      // console.log('LOGGING THE FILEDATA ', JSON.parse(fs.readFileSync(filePath, "utf-8")))
       if (fs.existsSync(filePath)) {
         try {
           return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -247,6 +276,7 @@ export default function handleAnnotationSocket(io) {
       }
       return { annotations: [], comments: [] };
     };
+    
 
     const loadMarksData = (userId, answerPdfId, evaluatorId) => {
       const filePath = getMarksDataFilePath(
@@ -311,6 +341,7 @@ export default function handleAnnotationSocket(io) {
       isHead = false,
     ) => {
       try {
+        console.log("DATA FOR MARKSDATA.JSON ",data)
         validateHeadAccess(userId, evaluatorId);
         const filePath = getMarksDataFilePath(
           userId,
@@ -947,7 +978,7 @@ export default function handleAnnotationSocket(io) {
 
     socket.on("add-marks", async (data) => {
       try {
-        console.log("marks-data", data);
+        // console.log("marks-data", data);
 
         const { taskId, userId, answerPdfId } = data;
 
@@ -990,7 +1021,7 @@ export default function handleAnnotationSocket(io) {
         //     });
         //   }
 
-        //   console.log("✅ Head marks saved in DB");
+          // console.log("✅ Head marks saved in DB");
 
         //   //  2. UPDATE marksData.json ALSO
 
@@ -1030,7 +1061,7 @@ export default function handleAnnotationSocket(io) {
         //     true,
         //   );
 
-        //   console.log("Head marksData.json updated");
+          // console.log("Head marksData.json updated");
 
         //   // 🔁 EMIT UPDATED DATA
         //   const headMarks = await HeadMarks.find({
@@ -1395,6 +1426,7 @@ export default function handleAnnotationSocket(io) {
           global.clearedHeadFolders = {};
         }
 
+
         if (isHead && !global.clearedHeadFolders[folderKey]) {
           resetHeadMarksToZero(userId, answerPdfId, evaluatorId);
 
@@ -1402,6 +1434,7 @@ export default function handleAnnotationSocket(io) {
 
           console.log("🔥 Head marks reset to 0 (ONLY ONCE)");
         }
+       
 
         // if (isHead && !global.clearedHeadFolders[folderKey]) {
         //   clearHeadFolder(userId, answerPdfId, evaluatorId, socket.taskType);
@@ -1832,12 +1865,13 @@ export default function handleAnnotationSocket(io) {
 
     socket.on("fetch-reviewerData", async (data) => {
       try {
-        const { evaluatorId, answerPdfId, page } = data;
+        const {userId, evaluatorId, answerPdfId, page } = data;
 
         // ✅ DIRECTLY READ evaluator data
-        const marksFile = loadMarks(evaluatorId, answerPdfId);
-        const marksDataFile = loadMarksData(evaluatorId, answerPdfId);
-        const fileData = loadData(evaluatorId, answerPdfId, page);
+        const marksFile = loadMarks(userId, evaluatorId, answerPdfId);
+        const marksDataFile = loadMarksData(userId, evaluatorId, answerPdfId);
+        const fileData = loadData(userId, evaluatorId, answerPdfId, page);
+        // console.log('FILEDATAAAAAAAAAA', fileData)
 
         // ✅ SEND only (NO COPYING)
         socket.emit("page-data-loaded", fileData);

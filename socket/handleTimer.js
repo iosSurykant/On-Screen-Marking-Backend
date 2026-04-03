@@ -26,16 +26,16 @@ export default function handleTimerSocket(io) {
     socket.on("join-timerRoom", ({ taskId }) => {
       const roomName = `task_${taskId}`;
       socket.join(roomName);
-      console.log(`🟢 Client ${socket.id} joined room: ${roomName}`);
+      // console.log(`🟢 Client ${socket.id} joined room: ${roomName}`);
       socket.emit("room-joined", { taskId, room: roomName });
     });
 
     socket.on("start-evaluation", async (data) => {
       try {
         const { taskId, answerPdfId } = data;
-        console.log("data of start-evaluation", data);
+        // console.log("data of start-evaluation", data);
         const timerKey = getTimerKey(taskId, answerPdfId);
-        console.log("timerKey", timerKey);
+        // console.log("timerKey", timerKey);
 
         // Ensure Redis is connected
         await connectRedis();
@@ -72,7 +72,7 @@ export default function handleTimerSocket(io) {
 
         // Check if timer exists in Redis
         const existingTimer = await redisClient.get(timerKey);
-        console.log("existingTimer", existingTimer);
+        // console.log("existingTimer", existingTimer);
 
         if (!existingTimer) {
           // Create new timer in Redis
@@ -87,12 +87,12 @@ export default function handleTimerSocket(io) {
           };
 
           await redisClient.set(timerKey, JSON.stringify(timerData));
-          console.log(`⏰ Timer created in Redis: ${timerKey}`);
+          // console.log(`⏰ Timer created in Redis: ${timerKey}`);
         }
 
         // Get current timer state (always fetch from Redis)
         const timer = JSON.parse(await redisClient.get(timerKey));
-        console.log("timer", timer);
+        // console.log("timer", timer);
 
         // Update remaining time if running
         const now = Date.now();
@@ -103,14 +103,14 @@ export default function handleTimerSocket(io) {
         // Save updated time back to Redis
         await redisClient.set(timerKey, JSON.stringify(timer));
 
-        console.log(
-          "timer update, remaining time, total time",
-          taskId,
-          answerPdfId,
-          timer.remainingTime,
+        // console.log(
+        //   "timer update, remaining time, total time",
+        //   taskId,
+        //   answerPdfId,
+        //   timer.remainingTime,
 
-          timer.totalTime,
-        );
+        //   timer.totalTime,
+        // );
 
         socket.emit("start-timer-update", {
           taskId,
@@ -132,13 +132,13 @@ export default function handleTimerSocket(io) {
     socket.on("timer-update", async (data) => {
       try {
         const { taskId, answerPdfId, remainingTime } = data;
-        console.log("🕒 Received timer update from frontend:", {
-          taskId,
-          answerPdfId,
-          remainingTime,
-        });
+        // console.log("🕒 Received timer update from frontend:", {
+        //   taskId,
+        //   answerPdfId,
+        //   remainingTime,
+        // });
 
-        console.log("Remaining time of timer from the frontend -: ", remainingTime);
+        // console.log("Remaining time of timer from the frontend -: ", remainingTime);
 
         // Ensure Redis is connected
         await connectRedis();
@@ -158,11 +158,11 @@ export default function handleTimerSocket(io) {
           // Save back to Redis
           await redisClient.set(timerKey, JSON.stringify(timer));
 
-          console.log("✅ Timer updated in Redis:", {
-            taskId,
-            answerPdfId,
-            remainingTime: timer.remainingTime,
-          });
+          // console.log("✅ Timer updated in Redis:", {
+          //   taskId,
+          //   answerPdfId,
+          //   remainingTime: timer.remainingTime,
+          // });
 
           // Optional: Send acknowledgment back to frontend
           socket.emit("timer-update-ack", {
@@ -172,7 +172,7 @@ export default function handleTimerSocket(io) {
             remainingTime: timer.remainingTime,
           });
         } else {
-          console.warn("⚠️ Timer not found in Redis for update:", timerKey);
+          // console.warn("⚠️ Timer not found in Redis for update:", timerKey);
           // socket.emit("timer-update-ack", {
           //   taskId,
           //   answerPdfId,
