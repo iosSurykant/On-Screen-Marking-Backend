@@ -1,0 +1,62 @@
+{
+  "annotations": [
+    {
+      "id": "4/4/2026, 5:36:12 PM",
+      "taskId": "69d0fe1ceac1ea192be00551",
+      "page": "4",
+      "answerPdfImageId": "69d0fe89eac1ea192be006a0",
+      "answerPdfId": "69d0fe1ceac1ea192be00555",
+      "userId": "69d0fddceac1ea192be004f9",
+      "questionDefinitionId": "69d0fd61eac1ea192be00483",
+      "iconUrl": "/Red_Check.png",
+      "question": 1,
+      "timeStamps": "4/4/2026, 5:36:12 PM",
+      "x": 255.625,
+      "y": 307.96875,
+      "width": 150,
+      "height": 80,
+      "synced": false,
+      "mark": 3,
+      "parentQuestionId": null
+    },
+    {
+      "id": "4/4/2026, 5:36:14 PM",
+      "taskId": "69d0fe1ceac1ea192be00551",
+      "page": "4",
+      "answerPdfImageId": "69d0fe89eac1ea192be006a0",
+      "answerPdfId": "69d0fe1ceac1ea192be00555",
+      "userId": "69d0fddceac1ea192be004f9",
+      "questionDefinitionId": "69d0fd61eac1ea192be00483",
+      "iconUrl": "/Red_Check.png",
+      "question": 1,
+      "timeStamps": "4/4/2026, 5:36:14 PM",
+      "x": 823.625,
+      "y": 358.96875,
+      "width": 150,
+      "height": 80,
+      "synced": false,
+      "mark": 1,
+      "parentQuestionId": null
+    },
+    {
+      "id": "4/4/2026, 5:36:17 PM",
+      "taskId": "69d0fe1ceac1ea192be00551",
+      "page": "4",
+      "answerPdfImageId": "69d0fe89eac1ea192be006a0",
+      "answerPdfId": "69d0fe1ceac1ea192be00555",
+      "userId": "69d0fddceac1ea192be004f9",
+      "questionDefinitionId": "69d0fd61eac1ea192be00483",
+      "iconUrl": "/Red_Check.png",
+      "question": 1,
+      "timeStamps": "4/4/2026, 5:36:17 PM",
+      "x": 883.625,
+      "y": 215.96875,
+      "width": 150,
+      "height": 80,
+      "synced": false,
+      "mark": 1,
+      "parentQuestionId": null
+    }
+  ],
+  "comments": []
+}
