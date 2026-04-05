@@ -215,7 +215,7 @@ const generateResult = async (req, res) => {
     fs.writeFileSync(tempCsvPath, fs.readFileSync(uploadedCsv.path));
 
     const csvData = await csvToJson(tempCsvPath);
-    
+    console.log('csvData',csvData)
     /* ------------------------------------------------------------ */
     /* 1️⃣ SUBJECT → RELATION → SCHEMA                              */
     /* ------------------------------------------------------------ */
@@ -296,89 +296,88 @@ async function generateQuestionWiseResult({
   if (tasks.length === 0) {
     return res.status(404).json({ message: "No tasks found." });
   }
-  
+
   const uniqueQuestions = new Set(
     tasks.map((t) => t.questiondefinitionId.toString()),
   );
-  
+
   if (uniqueQuestions.size !== totalQuestions) {
     return res.status(400).json({
       message: "All questions are not assigned yet.",
     });
   }
-  
+
   const taskIds = tasks.map((t) => t._id);
-  
+
   const allAnswerPdfs = await AnswerPdf.find({
     taskId: { $in: taskIds },
   });
-  
+
   if (!allAnswerPdfs.length) {
     return res.status(404).json({ message: "No booklets found." });
   }
-  
+
   const allAnswerPdfIds = allAnswerPdfs.map((pdf) => pdf._id);
   // console.log(allAnswerPdfIds)
   const allMarks = await Marks.find({
     answerPdfId: { $in: allAnswerPdfIds },
   }).populate("questionDefinitionId", "questionsName");
-  
-const taskIdss = allAnswerPdfs.map(item => item.taskId.toString());
 
-const filteredTasks = tasks.filter(task =>
-  taskIdss.includes(task._id.toString())
-);
+  const taskIdss = allAnswerPdfs.map((item) => item.taskId.toString());
 
-// console.log(filteredTasks);
+  const filteredTasks = tasks.filter((task) =>
+    taskIdss.includes(task._id.toString()),
+  );
 
-  
+  console.log(allMarks);
+
   const bookletMap = {};
-  
+
   for (const pdf of allAnswerPdfs) {
     const barcode = pdf.answerPdfName.replace(".pdf", "");
-    
+
     if (!bookletMap[barcode]) bookletMap[barcode] = {};
-    
+
     bookletMap[barcode][pdf.taskId.toString()] = pdf;
   }
-  
+
   const validBarcodes = [];
-  
+
   for (const barcode in bookletMap) {
     const taskWiseMap = bookletMap[barcode];
-    
+
     let isComplete = true;
-    
+
     for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
       if (!pdf || String(pdf.status) !== "true") {
         isComplete = false;
         break;
       }
-      
+
       const marksExist = allMarks.some(
         (m) =>
           m.answerPdfId.toString() === pdf._id.toString() &&
-        m.questionDefinitionId._id.toString() ===
-        task.questiondefinitionId.toString(),
+          m.questionDefinitionId._id.toString() ===
+            task.questiondefinitionId.toString(),
       );
-      
+
       if (!marksExist) {
         isComplete = false;
         break;
       }
     }
-    
+
     if (isComplete) validBarcodes.push(barcode);
   }
-  
+
   const generatingResults = validBarcodes.map((barcode) => {
     let totalMarks = 0;
     let questionWiseMarks = {};
     let evaluatedBySet = new Set();
-    
+
     const taskWiseMap = bookletMap[barcode];
-    console.log(taskWiseMap)
+    // console.log(taskWiseMap)
 
     for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
@@ -579,7 +578,7 @@ const getPreviousResult = async (req, res) => {
     if (files.length === 0) {
       return res
         .status(404)
-        .json({ message: "No results found for this subject code." });
+        .json({ message: "No results found for this subject code....." });
     }
 
     const results = files.map((filename) => {
@@ -1116,8 +1115,11 @@ const downloadCompletedBooklets = async (req, res) => {
     const checkIconBytes = fs.readFileSync(
       path.join(process.cwd(), "Red_Check.png"),
     );
-    const closeIconBytes = fs.readFileSync(
+    const blackCheckBytes = fs.readFileSync(
       path.join(process.cwd(), "Black_Check.png"),
+    );
+    const closeIconBytes = fs.readFileSync(
+      path.join(process.cwd(), "close.png"),
     );
 
     /* ------------------------------------------ */
@@ -1150,6 +1152,7 @@ const downloadCompletedBooklets = async (req, res) => {
 
         const checkIcon = await pdfDoc.embedPng(checkIconBytes);
         const closeIcon = await pdfDoc.embedPng(closeIconBytes);
+        
 
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -1331,7 +1334,7 @@ const downloadCompletedBooklets = async (req, res) => {
       const result = Object.values(grouped);
 
       for (const booklet of result) {
-        console.log(booklet);
+        // console.log(booklet);
         const imageFolder = path.join(
           "processedFolder",
           subjectCode,
@@ -1354,12 +1357,17 @@ const downloadCompletedBooklets = async (req, res) => {
           });
 
         const pdfDoc = await PDFDocument.create();
+        const pdfDocWithoutIcon = await PDFDocument.create();
 
         const checkIcon = await pdfDoc.embedPng(checkIconBytes);
         const closeIcon = await pdfDoc.embedPng(closeIconBytes);
+        const blackCheckIcon = await pdfDoc.embedPng(blackCheckBytes);
 
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+        const font2 = await pdfDocWithoutIcon.embedFont(StandardFonts.Helvetica);
+        const fontBold2 = await pdfDocWithoutIcon.embedFont(StandardFonts.HelveticaBold);
 
         let summaryData = [];
         let totalMarks = 0;
@@ -1392,14 +1400,22 @@ const downloadCompletedBooklets = async (req, res) => {
           const imagePath = path.join(imageFolder, imageName);
           const imgBytes = fs.readFileSync(imagePath);
           const png = await pdfDoc.embedPng(imgBytes);
-
+          const png2 = await pdfDocWithoutIcon.embedPng(imgBytes);
+          console.log(png.width, png.height);
           const page = pdfDoc.addPage([png.width, png.height]);
+          const page2 = pdfDocWithoutIcon.addPage([png2.width, png2.height]);
 
           page.drawImage(png, {
             x: 0,
             y: 0,
             width: png.width,
             height: png.height,
+          });
+          page2.drawImage(png2, {
+            x: 0,
+            y: 0,
+            width: png2.width,
+            height: png2.height,
           });
 
           // 🔥 LOOP DOCUMENTS INSIDE PAGE
@@ -1457,26 +1473,54 @@ const downloadCompletedBooklets = async (req, res) => {
               displacement = { x: 0, y: 0 };
             }
             for (const a of annotations) {
-              const icon =
-                a.iconUrl && a.iconUrl.includes("Red") ? checkIcon : closeIcon;
+              let icon;
+              console.log("annotations", a);
+
+              switch (true) {
+                case a.iconUrl && a.iconUrl.includes("Red"):
+                  icon = checkIcon;
+                  break;
+                case a.iconUrl && a.iconUrl.includes("Black"):
+                  icon = blackCheckIcon;
+                  break;
+
+                default:
+                  icon = closeIcon;
+              }
+
+              const pageHeight = page.getHeight();
+              const pageHeight2 = page2.getHeight();
 
               page.drawImage(icon, {
                 x: Number(a.x) + displacement.x,
-                y: Number(a.y) + displacement.y,
+                y: pageHeight - (Number(a.y) + displacement.y) - a.height,
                 width: a.width,
                 height: a.height,
               });
 
               page.drawText(`Q${a.question}`, {
-                x: Number(a.x) + displacement.x + 1,
-                y: Number(a.y) + displacement.y - 10,
+                x: Number(a.x) + displacement.x + 5,
+                y: pageHeight - (Number(a.y) + displacement.y) - 85,
                 size: 12,
                 font,
+              });
+              page2.drawText(`Q${a.question}`, {
+                x: Number(a.x) + displacement.x + 5,
+                y: pageHeight2 - (Number(a.y) + displacement.y) - 85,
+                size: 12,
+                font2,
               });
 
               page.drawCircle({
                 x: Number(a.x) + displacement.x + 55,
-                y: Number(a.y) + displacement.y - 9,
+                y: pageHeight - (Number(a.y) + displacement.y) - 79,
+                size: 10,
+                borderColor: rgb(0, 0.6, 0),
+                borderWidth: 2,
+              });
+              page2.drawCircle({
+                x: Number(a.x) + displacement.x + 55,
+                y: pageHeight2 - (Number(a.y) + displacement.y) - 79,
                 size: 10,
                 borderColor: rgb(0, 0.6, 0),
                 borderWidth: 2,
@@ -1484,9 +1528,15 @@ const downloadCompletedBooklets = async (req, res) => {
 
               page.drawText(String(a.mark), {
                 x: Number(a.x) + displacement.x + 55,
-                y: Number(a.y) + displacement.y - 13,
+                y: pageHeight - (Number(a.y) + displacement.y) - 85,
                 size: 12,
                 font,
+              });
+              page2.drawText(String(a.mark), {
+                x: Number(a.x) + displacement.x + 55,
+                y: pageHeight2 - (Number(a.y) + displacement.y) - 85,
+                size: 12,
+                font2,
               });
 
               summaryData.push({
@@ -1501,6 +1551,7 @@ const downloadCompletedBooklets = async (req, res) => {
           }
         }
         const summaryPage = pdfDoc.addPage();
+        const summaryPage2 = pdfDocWithoutIcon.addPage();
 
         const { width, height } = summaryPage.getSize();
 
@@ -1510,6 +1561,12 @@ const downloadCompletedBooklets = async (req, res) => {
           size: 18,
           font: fontBold,
         });
+        summaryPage2.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
+          x: 50,
+          y: height - 40,
+          size: 18,
+          font: fontBold2,
+        });
 
         let y = height - 80;
 
@@ -1517,6 +1574,11 @@ const downloadCompletedBooklets = async (req, res) => {
         summaryPage.drawText("Marks", { x: 150, y, font: fontBold });
         summaryPage.drawText("Page", { x: 250, y, font: fontBold });
         summaryPage.drawText("Time", { x: 350, y, font: fontBold });
+
+        summaryPage2.drawText("Question", { x: 50, y, font: fontBold2 });
+        summaryPage2.drawText("Marks", { x: 150, y, font: fontBold2 });
+        summaryPage2.drawText("Page", { x: 250, y, font: fontBold2 });
+        summaryPage2.drawText("Time", { x: 350, y, font: fontBold2 });
 
         y -= 20;
 
@@ -1531,6 +1593,16 @@ const downloadCompletedBooklets = async (req, res) => {
           summaryPage.drawText(String(row.page), { x: 250, y, size: 11, font });
           summaryPage.drawText(row.time, { x: 350, y, size: 11, font });
 
+          summaryPage2.drawText(row.question, { x: 50, y, size: 11, font2 });
+          summaryPage2.drawText(String(row.marks), {
+            x: 150,
+            y,
+            size: 11,
+            font2,
+          });
+          summaryPage2.drawText(String(row.page), { x: 250, y, size: 11, font2 });
+          summaryPage2.drawText(row.time, { x: 350, y, size: 11, font2 });
+
           y -= 20;
         }
 
@@ -1540,11 +1612,21 @@ const downloadCompletedBooklets = async (req, res) => {
           size: 14,
           font: fontBold,
         });
+        summaryPage2.drawText(`Total Marks: ${totalMarks}`, {
+          x: width - 200,
+          y: y - 10,
+          size: 14,
+          font: fontBold2,
+        });
 
         const finalBytes = await pdfDoc.save();
+        const finalBytes2 = await pdfDocWithoutIcon.save();
 
         archive.append(Buffer.from(finalBytes), {
           name: booklet.answerPdfName,
+        });
+        archive.append(Buffer.from(finalBytes2), {
+          name: `${booklet.answerPdfName}_Without_Icon.pdf`,
         });
       }
 

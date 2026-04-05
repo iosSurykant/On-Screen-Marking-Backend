@@ -5418,7 +5418,7 @@ const completedBookletHandler = async (req, res) => {
     console.log("Starting sync for booklet:", answerpdfid);
 
     let folderPath;
-    if (userRole === "headevaluator") {
+    if (userRole.role === "headevaluator") {
       folderPath = path.join(
         "Annotations",
         String(taskData.evaluatorId),
