@@ -1,0 +1,24 @@
+{
+  "annotations": [
+    {
+      "id": "4/8/2026, 4:13:36 PM",
+      "taskId": "69d630e6c9f7f509315de154",
+      "page": "5",
+      "answerPdfImageId": null,
+      "answerPdfId": "69d630e6c9f7f509315de156",
+      "userId": "69d630b2c9f7f509315de0fa",
+      "questionDefinitionId": "69d6305dc9f7f509315de088",
+      "iconUrl": "/Red_Check.png",
+      "question": 2,
+      "timeStamps": "4/8/2026, 4:13:36 PM",
+      "x": 642.625,
+      "y": 321.96875,
+      "width": 150,
+      "height": 80,
+      "synced": false,
+      "mark": 6,
+      "parentQuestionId": null
+    }
+  ],
+  "comments": []
+}

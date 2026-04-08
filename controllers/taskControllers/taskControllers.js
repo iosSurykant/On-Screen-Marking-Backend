@@ -4791,7 +4791,7 @@ const reassignBookletsCore = async ({
   session,
 }) => {
   const isBooklet = taskType === "booklet";
-
+  
   const TaskModel = isBooklet ? BookletTask : Task;
   const PdfModel = isBooklet ? BookletAnswerPdf : AnswerPdf;
 
@@ -5273,6 +5273,8 @@ const completedBookletHandler = async (req, res) => {
     const { answerpdfid, userId } = req.params;
     const { submitted } = req.body;
 
+    console.log('userId',userId)
+
     console.log("User Id for the booklet is this -:", userId);
 
     const taskDoc = await AnswerPdf.findById(answerpdfid)
@@ -5287,7 +5289,7 @@ const completedBookletHandler = async (req, res) => {
       .select("subjectCode evaluatorId")
       .lean();
     const userRole = await User.findById(userId).select("role").lean();
-    console.log("USER ROLE", taskData);
+    console.log("USER ROLE", userRole);
     const subjectCode = taskData?.subjectCode;
 
     console.log("subjectCode", subjectCode);
@@ -5637,6 +5639,7 @@ const completedBookletHandler = async (req, res) => {
       await task.save();
 
       const evaluator = await User.findById(userId).select("deputyHead");
+      console.log('evaluator', evaluator)
       const deputyHeadId = evaluator?.deputyHead;
 
       if (!deputyHeadId) {
@@ -5646,7 +5649,7 @@ const completedBookletHandler = async (req, res) => {
 
         try {
           await session.startTransaction();
-
+         
           await reassignBookletsCore({
             fromTaskId: task._id,
             toUserId: deputyHeadId,
