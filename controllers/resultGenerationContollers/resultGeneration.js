@@ -296,102 +296,118 @@ async function generateQuestionWiseResult({
   if (tasks.length === 0) {
     return res.status(404).json({ message: "No tasks found." });
   }
-
+  
   const uniqueQuestions = new Set(
     tasks.map((t) => t.questiondefinitionId.toString()),
   );
-
+  // console.log('uniqueQuestions',uniqueQuestions)
+  
   if (uniqueQuestions.size !== totalQuestions) {
     return res.status(400).json({
       message: "All questions are not assigned yet.",
     });
   }
-
+  
   const taskIds = tasks.map((t) => t._id);
-
+  // console.log('taskIds',taskIds)
+  
   const allAnswerPdfs = await AnswerPdf.find({
     taskId: { $in: taskIds },
   });
-
+  
   if (!allAnswerPdfs.length) {
     return res.status(404).json({ message: "No booklets found." });
   }
-
+  
   const allAnswerPdfIds = allAnswerPdfs.map((pdf) => pdf._id);
   // console.log(allAnswerPdfIds)
   const allMarks = await Marks.find({
     answerPdfId: { $in: allAnswerPdfIds },
   }).populate("questionDefinitionId", "questionsName");
-
+  // console.log('allMarks',allMarks)
+  
   const taskIdss = allAnswerPdfs.map((item) => item.taskId.toString());
-
+  // console.log('taskIdss',taskIdss)
+  
+  // console.log('tasks',tasks)
   const filteredTasks = tasks.filter((task) =>
     taskIdss.includes(task._id.toString()),
-  );
+);
+console.log('filteredTasks',filteredTasks)
 
-  console.log(allMarks);
+  // console.log(allMarks);
 
   const bookletMap = {};
 
   for (const pdf of allAnswerPdfs) {
     const barcode = pdf.answerPdfName.replace(".pdf", "");
-
     if (!bookletMap[barcode]) bookletMap[barcode] = {};
-
+    
     bookletMap[barcode][pdf.taskId.toString()] = pdf;
   }
-
+  
+  // console.log('bookletMap',bookletMap)
+  
   const validBarcodes = [];
-
+  
   for (const barcode in bookletMap) {
     const taskWiseMap = bookletMap[barcode];
-
+    // console.log('taskWiseMap',taskWiseMap)
+    
     let isComplete = true;
+    // console.log('taskWiseMap',taskWiseMap)
 
     for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
+      console.log('taskWiseMap',taskWiseMap)
+      console.log('pdf',pdf)
       if (!pdf || String(pdf.status) !== "true") {
         isComplete = false;
+        console.log('HERE FLASE')
         break;
       }
-
+      
       const marksExist = allMarks.some(
         (m) =>
           m.answerPdfId.toString() === pdf._id.toString() &&
-          m.questionDefinitionId._id.toString() ===
-            task.questiondefinitionId.toString(),
+        m.questionDefinitionId._id.toString() ===
+        task.questiondefinitionId.toString(),
       );
-
+      
+      console.log(marksExist)
       if (!marksExist) {
         isComplete = false;
+          console.log('THERE FLASE')
         break;
       }
     }
-
+    // console.log('isComplete',isComplete)
     if (isComplete) validBarcodes.push(barcode);
   }
-
+console.log('validBarcodes',validBarcodes)
   const generatingResults = validBarcodes.map((barcode) => {
     let totalMarks = 0;
     let questionWiseMarks = {};
     let evaluatedBySet = new Set();
 
     const taskWiseMap = bookletMap[barcode];
-    // console.log(taskWiseMap)
+    // console.log('taskWiseMap',taskWiseMap)
 
     for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
-
       const marks = allMarks.filter(
         (m) => m.answerPdfId.toString() === pdf._id.toString(),
       );
-
+      
+      
+      // console.log('pdf',pdf)
+      // console.log('marks',marks)
       for (const mark of marks) {
         const qName = mark.questionDefinitionId?.questionsName || "Unknown";
 
         questionWiseMarks[`Q${qName}`] =
           (questionWiseMarks[`Q${qName}`] || 0) + mark.allottedMarks;
-
+        // console.log(questionWiseMarks)
         totalMarks += mark.allottedMarks;
       }
 
@@ -407,12 +423,13 @@ async function generateQuestionWiseResult({
       EVALUATEDBY: Array.from(evaluatedBySet).join(", "),
     };
   });
-
+// console.log('csvData',csvData)
+// console.log('generatingResults',generatingResults)
   const finalResults = csvData.map((row) => {
     const match = generatingResults.find(
       (r) => String(r.BARCODE).trim() === String(row.BARCODE).trim(),
     );
-
+    // console.log(row)
     if (match) {
       const { BARCODE, ...resultData } = match;
 
@@ -427,7 +444,7 @@ async function generateQuestionWiseResult({
       RESULT: "Not Fully Evaluated",
     };
   });
-
+// console.log(finalResults)
   const newCsvData = convertJSONToCSV(finalResults);
 
   const resultCsvPath = path.join(resultFolder, "result.csv");
