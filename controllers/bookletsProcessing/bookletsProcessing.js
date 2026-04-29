@@ -958,8 +958,10 @@ const getAllBookletsName = async (req, res) => {
 };
 
 const uploadingBooklets = async (req, res) => {
+  
   try {
     const { subjectCode } = req.body;
+
 
     if (!subjectCode) {
       return res.status(400).json({ message: "subjectCode is required" });
@@ -985,6 +987,7 @@ const uploadingBooklets = async (req, res) => {
         message: `Subject folder ${subjectCode} not found`,
       });
     }
+    const fileExt = path.extname(req.files[0].originalname).toLowerCase();
 
     let uploadedCount = 0;
     let zipProcessed = false;
@@ -1049,6 +1052,8 @@ const uploadingBooklets = async (req, res) => {
         });
       }
     }
+      
+    
 
     return res.status(200).json({
       message: "Files uploaded successfully",

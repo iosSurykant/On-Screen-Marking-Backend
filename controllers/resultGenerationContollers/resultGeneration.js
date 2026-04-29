@@ -215,7 +215,7 @@ const generateResult = async (req, res) => {
     fs.writeFileSync(tempCsvPath, fs.readFileSync(uploadedCsv.path));
 
     const csvData = await csvToJson(tempCsvPath);
-    console.log('csvData',csvData)
+    console.log("csvData", csvData);
     /* ------------------------------------------------------------ */
     /* 1️⃣ SUBJECT → RELATION → SCHEMA                              */
     /* ------------------------------------------------------------ */
@@ -299,13 +299,10 @@ async function generateQuestionWiseResult({
     return res.status(404).json({ message: "No tasks found." });
   }
 
-  /* ------------------------------------------------------------ */
-  /* 2️⃣ VALIDATE ALL QUESTIONS ASSIGNED                          */
-  /* ------------------------------------------------------------ */
-
   const uniqueQuestions = new Set(
     tasks.map((t) => t.questiondefinitionId.toString())
   );
+  // console.log('uniqueQuestions',uniqueQuestions)
 
   if (uniqueQuestions.size !== totalQuestions) {
     return res.status(400).json({
@@ -1298,7 +1295,6 @@ const downloadCompletedBooklets = async (req, res) => {
 
         const checkIcon = await pdfDoc.embedPng(checkIconBytes);
         const closeIcon = await pdfDoc.embedPng(closeIconBytes);
-        
 
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -1536,10 +1532,15 @@ const downloadCompletedBooklets = async (req, res) => {
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-        const font2 = await pdfDocWithoutIcon.embedFont(StandardFonts.Helvetica);
-        const fontBold2 = await pdfDocWithoutIcon.embedFont(StandardFonts.HelveticaBold);
+        const font2 = await pdfDocWithoutIcon.embedFont(
+          StandardFonts.Helvetica,
+        );
+        const fontBold2 = await pdfDocWithoutIcon.embedFont(
+          StandardFonts.HelveticaBold,
+        );
 
         let summaryData = [];
+        let users = []
         let totalMarks = 0;
 
         // for (const value of booklet.documents) {
@@ -1562,6 +1563,9 @@ const downloadCompletedBooklets = async (req, res) => {
         //       String(value._id),
         //     );
         //   }
+
+
+        let allAnnotations = []
 
         for (let i = 0; i < imageFiles.length; i++) {
           const imageName = imageFiles[i];
@@ -1626,7 +1630,7 @@ const downloadCompletedBooklets = async (req, res) => {
 
             const json = JSON.parse(fs.readFileSync(jsonPath));
             const annotations = json.annotations || [];
-            // console.log( annotations)
+            // console.log( 'annotations',annotations)
 
             let displacement;
 
@@ -1644,7 +1648,7 @@ const downloadCompletedBooklets = async (req, res) => {
             }
             for (const a of annotations) {
               let icon;
-              console.log("annotations", a);
+              // console.log("annotations", a);
 
               switch (true) {
                 case a.iconUrl && a.iconUrl.includes("Red"):
@@ -1795,14 +1799,36 @@ const downloadCompletedBooklets = async (req, res) => {
                 marks: a.mark,
                 page: pageNumber,
                 time: a.timeStamps || "",
+                user:a.email
               });
 
-              totalMarks += Number(a.mark);
+              if(!users.includes(a.email)){
+                users.push(a.email)
+              }
+
+              // totalMarks += Number(a.mark);
             }
+            allAnnotations.push(...annotations)
           }
         }
-        const summaryPage = pdfDoc.addPage();
-        const summaryPage2 = pdfDocWithoutIcon.addPage();
+        console.log('allAnnotations-------------',allAnnotations)
+        let questionCount = []
+
+        for (const e of allAnnotations) {
+          if(e.role=="headevaluator"){
+            totalMarks+=Number(e.mark)
+            questionCount.push(e.question)
+          }
+        }
+
+        for (const e of allAnnotations) {
+          if(!questionCount.includes(e.question)){
+            totalMarks+=Number(e.mark)
+          }
+          
+        }
+        const summaryPage = pdfDoc.insertPage(0, [1080,1920]);
+        const summaryPage2 = pdfDocWithoutIcon.insertPage(0, [1080,1920]);
 
         const { width, height } = summaryPage.getSize();
 
@@ -1821,38 +1847,61 @@ const downloadCompletedBooklets = async (req, res) => {
 
         let y = height - 80;
 
-        summaryPage.drawText("Question", { x: 50, y, font: fontBold });
-        summaryPage.drawText("Marks", { x: 150, y, font: fontBold });
-        summaryPage.drawText("Page", { x: 250, y, font: fontBold });
-        summaryPage.drawText("Time", { x: 350, y, font: fontBold });
+        summaryPage.drawText("Question", { x: 50, y, size: 13 ,font: fontBold });
+        summaryPage2.drawText("Question", { x: 50, y, size: 13 ,font: fontBold2 });
+        let coord = 150
+        let coordEmailPair = new Map()
 
-        summaryPage2.drawText("Question", { x: 50, y, font: fontBold2 });
-        summaryPage2.drawText("Marks", { x: 150, y, font: fontBold2 });
-        summaryPage2.drawText("Page", { x: 250, y, font: fontBold2 });
-        summaryPage2.drawText("Time", { x: 350, y, font: fontBold2 });
+        for (const e of users) {
+          summaryPage.drawText(e, { x: coord, y, size: 11, font: fontBold });
+          summaryPage2.drawText(e, { x: coord, y, size: 11, font: fontBold2 });
+          coordEmailPair.set(e,coord)
+          coord+=100
+
+        }
+        // summaryPage.drawText("Marks", { x: 150, y, size: 13, font: fontBold });
+        summaryPage.drawText("Page", { x: coord, y, size: 13, font: fontBold });
+        summaryPage2.drawText("Page", { x: coord, y, size: 13 ,font: fontBold2 });
+        coordEmailPair.set('page',coord)
+        summaryPage.drawText("Time", { x: coord+=120, y, size: 13, font: fontBold });
+        summaryPage2.drawText("Time", { x: coord, y , size: 13, font: fontBold2 });
+        coordEmailPair.set('time',coord)
+        // summaryPage.drawText("User", { x: coord+=120, y, size: 13, font: fontBold });
+        
+        // console.log(coordEmailPair)
+        
+        
+        
+        
 
         y -= 20;
 
         for (const row of summaryData) {
           summaryPage.drawText(row.question, { x: 50, y, size: 11, font });
           summaryPage.drawText(String(row.marks), {
-            x: 150,
+            x: coordEmailPair.get(row.user),
             y,
             size: 11,
             font,
           });
-          summaryPage.drawText(String(row.page), { x: 250, y, size: 11, font });
-          summaryPage.drawText(row.time, { x: 350, y, size: 11, font });
+          summaryPage.drawText(String(row.page), { x: coordEmailPair.get('page'), y, size: 11, font });
+          summaryPage.drawText(row.time, { x: coordEmailPair.get('time'), y, size: 11, font });
+          // summaryPage.drawText(row.user, { x: 480, y, size: 11, font });
 
           summaryPage2.drawText(row.question, { x: 50, y, size: 11, font2 });
           summaryPage2.drawText(String(row.marks), {
-            x: 150,
+            x: coordEmailPair.get(row.user),
             y,
             size: 11,
             font2,
           });
-          summaryPage2.drawText(String(row.page), { x: 250, y, size: 11, font2 });
-          summaryPage2.drawText(row.time, { x: 350, y, size: 11, font2 });
+          summaryPage2.drawText(String(row.page), {
+            x: coordEmailPair.get('page'),
+            y,
+            size: 11,
+            font2,
+          });
+          summaryPage2.drawText(row.time, { x: coordEmailPair.get('time'), y, size: 11, font2 });
 
           y -= 20;
         }
