@@ -14,8 +14,8 @@ async function createInitialUser() {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash("12345678", salt);
       const newUser = new User({
-        name: "Abhishek Mishra",
-        email: "abhishekomr077@gmail.com",
+        name: "Admin",
+        email: "mosadmin@gmail.com",
         password: hashedPassword,
         fingerprint:
           "Rk1SACAyMAAAAAFcAAABLAGQAMUAxQEAAABdNUDnAChoAEC9ACpsAECvADNzAECUADT7AEDFADvsAEDKAEvnAEDAAFJxAIBaAFuMAEECAF9fAEDBAGDqAEBVAGUKAEDeAGpoAIBRAG2OAECdAHJ7AED6AHVfAEBRAIeWAEAQAI2kAECNAJGDAEBBAJWdAEDRAJtoAEARAJ4fAECVAKiHAICrALV5AIEJALfRAEBoAManAEB1AMqoAECDAM+zAEEfANDNAIDHANnGAEEHAN3KAEBIAOW4AICxAO5QAEEkAPFNAIDOAPU4AEDmAPizAEBWAPzHAEEIAQK7AIDqAQiuAEDIAQuWAEA1ARXKAID3AR6vAECoAR54AIDMASKYAEBVASTbAICqATIGAEAmATTRAECUATdxAED7AT2nAECyAUOGAICMAUb5AEBkAVLoAEBrAV1oAECMAV5zAAAA",

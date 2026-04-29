@@ -967,26 +967,19 @@ const uploadingBooklets = async (req, res) => {
       return res.status(400).json({ message: "subjectCode is required" });
     }
 
-    /* =====================================================
-       🚫 NORMAL FOLDER UPLOAD (MULTIPLE FILES)
-    ===================================================== */
-    // if (req.files && req.files.length > 1) {
-    //   return res.status(400).json({
-    //     message:
-    //       "Folder upload detected. Please upload the folder in ZIP format.",
-    //   });
-    // }
+    // ✅ Accept multiple files
+    const files = req.files;
 
-    if (!req.files) {
+    if (!files || files.length === 0) {
       return res.status(400).json({
-        message: "Please upload a PDF or a ZIP file",
+        message: "Please upload at least one PDF or ZIP file",
       });
     }
 
     const subjectFolder = path.join(
       process.cwd(),
       "scannedFolder",
-      subjectCode,
+      subjectCode
     );
 
     if (!fs.existsSync(subjectFolder)) {
@@ -996,85 +989,79 @@ const uploadingBooklets = async (req, res) => {
     }
     const fileExt = path.extname(req.files[0].originalname).toLowerCase();
 
-//     const checkformat = req.files.forEach((e)=>{
-//       if(path.extname(e.originalname).toLowerCase()!='.pdf'||'.zip'){
-//         fileExt = '.pdf'
-//       }
-//     })
+    let uploadedCount = 0;
+    let zipProcessed = false;
 
-    
-// console.log('checkformat',checkformat)
-    // console.log(fileExt)
+    for (const file of files) {
+      const fileExt = path.extname(file.originalname).toLowerCase();
 
-    /* =====================================================
-       ✅ SINGLE PDF UPLOAD
-    ===================================================== */
-    if(fileExt=='.pdf'){
-      req.files.forEach((e)=>{
+      /* ==========================================
+         ✅ HANDLE PDF
+      ========================================== */
+      if (fileExt === ".pdf") {
         fs.renameSync(
-        e.path,
-        path.join(subjectFolder, e.originalname),
-      );
-      })
-      
-
-      return res.status(200).json({
-        message: "Single PDF uploaded successfully",
-        subjectCode,
-      });
-    }
-      
-    
-
-    /* =====================================================
-       ✅ ZIP FILE UPLOAD
-    ===================================================== */
-    if(fileExt=='.zip'){
-      let pdfFound = false;
-
-      await fs
-        .createReadStream(req.file.path)
-        .pipe(unzipper.Parse())
-        .on("entry", (entry) => {
-          const ext = path.extname(entry.path).toLowerCase();
-
-          if (ext === ".pdf") {
-            pdfFound = true;
-            entry.pipe(
-              fs.createWriteStream(
-                path.join(subjectFolder, path.basename(entry.path)),
-              ),
-            );
-          } else {
-            entry.autodrain();
-          }
-        })
-        .promise();
-
-      fs.unlinkSync(req.file.path);
-
-      if (!pdfFound) {
-        return res.status(400).json({
-          message: "ZIP file does not contain any PDF files",
-        });
+          file.path,
+          path.join(subjectFolder, file.originalname)
+        );
+        uploadedCount++;
       }
 
-      return res.status(200).json({
-        message: "ZIP extracted and PDFs uploaded successfully",
-        subjectCode,
-      });
+      /* ==========================================
+         ✅ HANDLE ZIP
+      ========================================== */
+      else if (fileExt === ".zip") {
+        zipProcessed = true;
+        let pdfFoundInZip = false;
+
+        await fs
+          .createReadStream(file.path)
+          .pipe(unzipper.Parse())
+          .on("entry", (entry) => {
+            const ext = path.extname(entry.path).toLowerCase();
+
+            if (ext === ".pdf") {
+              pdfFoundInZip = true;
+              entry.pipe(
+                fs.createWriteStream(
+                  path.join(subjectFolder, path.basename(entry.path))
+                )
+              );
+              uploadedCount++;
+            } else {
+              entry.autodrain();
+            }
+          })
+          .promise();
+
+        fs.unlinkSync(file.path);
+
+        if (!pdfFoundInZip) {
+          return res.status(400).json({
+            message: `ZIP (${file.originalname}) does not contain any PDF files`,
+          });
+        }
+      }
+
+      /* ==========================================
+         ❌ INVALID FILE
+      ========================================== */
+      else {
+        fs.unlinkSync(file.path);
+        return res.status(400).json({
+          message: `Invalid file type: ${file.originalname}`,
+        });
+      }
     }
       
     
 
-    /* =====================================================
-       🚫 INVALID FILE TYPE
-    ===================================================== */
-    fs.unlinkSync(req.file.path);
-
-    return res.status(400).json({
-      message: "Only PDF or ZIP files are allowed",
+    return res.status(200).json({
+      message: "Files uploaded successfully",
+      totalFilesProcessed: uploadedCount,
+      zipProcessed,
+      subjectCode,
     });
+
   } catch (error) {
     console.error("Upload error:", error);
     return res.status(500).json({
@@ -1189,11 +1176,102 @@ const processingBookletsManually = async (req, res) => {
   }
 };
 
+const deleteBookletsByRange = async (req, res) => {
+  const { subjectCode, from, to } = req.body;
+
+  if (!subjectCode || from == null || to == null) {
+    return res.status(400).json({
+      message: "subjectCode, from and to are required",
+    });
+  }
+
+  if (from > to) {
+    return res.status(400).json({
+      message: "'from' cannot be greater than 'to'",
+    });
+  }
+
+  try {
+    const start = Number(from);
+    const end = Number(to);
+
+    //  Paths
+    const scannedPath = path.join(__dirname, "scannedFolder", subjectCode);
+    const processedPath = path.join(__dirname, "processedFolder", subjectCode);
+    const rejectedPath = path.join(__dirname, "rejectedBookletsFolder", subjectCode);
+
+    let deletedFiles = [];
+
+    //  Helper function to delete matching files
+    const deleteFromFolder = (folderPath) => {
+      if (!fs.existsSync(folderPath)) return;
+
+      const files = fs.readdirSync(folderPath).filter(f => f.endsWith(".pdf"));
+
+      files.forEach(file => {
+        // Extract booklet number from filename
+        const match = file.match(/\d+/);
+        if (!match) return;
+
+        const bookletNumber = Number(match[0]);
+
+        if (bookletNumber >= start && bookletNumber <= end) {
+          const fullPath = path.join(folderPath, file);
+          fs.unlinkSync(fullPath);
+          deletedFiles.push(file);
+        }
+      });
+    };
+
+    //  Delete from all folders
+    deleteFromFolder(scannedPath);
+    deleteFromFolder(processedPath);
+    deleteFromFolder(rejectedPath);
+
+    //  Delete from DB (AnswerPdf)
+    const answerPdfs = await AnswerPdf.find({
+      answerPdfName: { $in: deletedFiles }
+    });
+
+    const taskIds = answerPdfs.map(a => a.taskId);
+
+    await AnswerPdf.deleteMany({
+      answerPdfName: { $in: deletedFiles }
+    });
+
+    //  Update Tasks (reduce totalBooklets)
+    await Task.updateMany(
+      { _id: { $in: taskIds } },
+      { $inc: { totalBooklets: -1 } }
+    );
+
+    // Update Folder Stats
+    await SubjectFolderModel.updateOne(
+      { folderName: subjectCode },
+      {
+        $inc: { unAllocated: -deletedFiles.length },
+      }
+    );
+
+    return res.status(200).json({
+      message: `${deletedFiles.length} booklets deleted successfully`,
+      deletedFiles,
+    });
+
+  } catch (error) {
+    console.error("Delete error:", error);
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
+};
+
 export {
   processingBookletsBySocket,
   uploadingBooklets,
   servingBooklets,
   removeRejectedBooklets,
+  deleteBookletsByRange,
   getAllBookletsName,
   processingBookletsManually,
 };

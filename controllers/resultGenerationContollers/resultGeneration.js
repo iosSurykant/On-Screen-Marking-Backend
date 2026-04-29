@@ -222,7 +222,7 @@ const generateResult = async (req, res) => {
 
     const subject = await Subject.findOne({ code: subjectcode });
 
-    if (!subject) {
+  if (!subject) {
       return res.status(404).json({ message: "Subject not found." });
     }
 
@@ -289,16 +289,18 @@ async function generateQuestionWiseResult({
 }) {
   const totalQuestions = schema.totalQuestions;
 
-  const tasks = await Task.find({ subjectCode: subjectcode }).populate(
-    "userId",
-    "email",
-  );
+  /* ------------------------------------------------------------ */
+  /* 1️⃣ FETCH TASKS                                              */
+  /* ------------------------------------------------------------ */
+
+  const tasks = await Task.find({ subjectCode: subjectcode });
+
   if (tasks.length === 0) {
     return res.status(404).json({ message: "No tasks found." });
   }
 
   const uniqueQuestions = new Set(
-    tasks.map((t) => t.questiondefinitionId.toString()),
+    tasks.map((t) => t.questiondefinitionId.toString())
   );
   // console.log('uniqueQuestions',uniqueQuestions)
 
@@ -308,8 +310,22 @@ async function generateQuestionWiseResult({
     });
   }
 
+  /* ------------------------------------------------------------ */
+  /* 3️⃣ FETCH USERS (IMPORTANT OPTIMIZATION)                     */
+  /* ------------------------------------------------------------ */
+
+  const allUsers = await User.find().select("_id email");
+
+  const userMap = {};
+  allUsers.forEach((u) => {
+    userMap[u._id.toString()] = u.email;
+  });
+
+  /* ------------------------------------------------------------ */
+  /* 4️⃣ FETCH ANSWER PDFs                                        */
+  /* ------------------------------------------------------------ */
+
   const taskIds = tasks.map((t) => t._id);
-  // console.log('taskIds',taskIds)
 
   const allAnswerPdfs = await AnswerPdf.find({
     taskId: { $in: taskIds },
@@ -320,107 +336,125 @@ async function generateQuestionWiseResult({
   }
 
   const allAnswerPdfIds = allAnswerPdfs.map((pdf) => pdf._id);
-  // console.log(allAnswerPdfIds)
+
+  /* ------------------------------------------------------------ */
+  /* 5️⃣ FETCH MARKS                                              */
+  /* ------------------------------------------------------------ */
+
   const allMarks = await Marks.find({
     answerPdfId: { $in: allAnswerPdfIds },
   }).populate("questionDefinitionId", "questionsName");
-  // console.log('allMarks',allMarks)
 
-  const taskIdss = allAnswerPdfs.map((item) => item.taskId.toString());
-  // console.log('taskIdss',taskIdss)
+  /* ------------------------------------------------------------ */
+  /* 6️⃣ FILTER TASKS (ONLY USED ONES)                            */
+  /* ------------------------------------------------------------ */
 
-  // console.log('tasks',tasks)
-  const filteredTasks = tasks.filter((task) =>
-    taskIdss.includes(task._id.toString()),
+  const usedTaskIds = allAnswerPdfs.map((item) =>
+    item.taskId.toString()
   );
-  // console.log("filteredTasks", filteredTasks);
 
-  // console.log(allMarks);
+  const filteredTasks = tasks.filter((task) =>
+    usedTaskIds.includes(task._id.toString())
+  );
+
+  /* ------------------------------------------------------------ */
+  /* 7️⃣ BUILD BOOKLET MAP                                        */
+  /* ------------------------------------------------------------ */
 
   const bookletMap = {};
 
   for (const pdf of allAnswerPdfs) {
     const barcode = pdf.answerPdfName.replace(".pdf", "");
+
     if (!bookletMap[barcode]) bookletMap[barcode] = {};
 
     bookletMap[barcode][pdf.taskId.toString()] = pdf;
   }
 
-  // console.log('bookletMap',bookletMap)
+  /* ------------------------------------------------------------ */
+  /* 8️⃣ FIND VALID (FULLY EVALUATED) BOOKLETS                    */
+  /* ------------------------------------------------------------ */
 
   const validBarcodes = [];
 
   for (const barcode in bookletMap) {
     const taskWiseMap = bookletMap[barcode];
-    // console.log('taskWiseMap',taskWiseMap)
 
     let isComplete = true;
-    // console.log('taskWiseMap',taskWiseMap)
 
     for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
-      // console.log("taskWiseMap", taskWiseMap);
-      // console.log("pdf", pdf);
 
-      if (pdf === undefined) {
-        continue; // Don't mark incomplete, just skip
-      }
+      if (!pdf) continue;
 
-      if (!pdf || String(pdf.status) !== "true") {
+      if (String(pdf.status) !== "true") {
         isComplete = false;
-        // console.log("HERE FLASE");
         break;
       }
-
-      // console.log('ALLMARKS', allMarks)
 
       const marksExist = allMarks.some(
         (m) =>
           m.answerPdfId.toString() === pdf._id.toString() &&
           m.questionDefinitionId._id.toString() ===
-            task.questiondefinitionId.toString(),
+            task.questiondefinitionId.toString()
       );
 
-      console.log(marksExist);
       if (!marksExist) {
         isComplete = false;
-        // console.log("THERE FLASE");
         break;
       }
     }
-    // console.log('isComplete',isComplete)
+
     if (isComplete) validBarcodes.push(barcode);
   }
-  // console.log("validBarcodes", validBarcodes);
+
+  /* ------------------------------------------------------------ */
+  /* 9️⃣ GENERATE RESULTS                                         */
+  /* ------------------------------------------------------------ */
+
   const generatingResults = validBarcodes.map((barcode) => {
     let totalMarks = 0;
     let questionWiseMarks = {};
     let evaluatedBySet = new Set();
 
     const taskWiseMap = bookletMap[barcode];
-    // console.log('taskWiseMap',taskWiseMap)
 
     for (const task of filteredTasks) {
       const pdf = taskWiseMap[task._id.toString()];
-
       if (!pdf) continue;
+
       const marks = allMarks.filter(
-        (m) => m.answerPdfId.toString() === pdf._id.toString(),
+        (m) => m.answerPdfId.toString() === pdf._id.toString()
       );
 
-      // console.log('pdf',pdf)
-      // console.log('marks',marks)
+      /* -------- MARKS CALCULATION -------- */
+
       for (const mark of marks) {
-        const qName = mark.questionDefinitionId?.questionsName || "Unknown";
+        const qName =
+          mark.questionDefinitionId?.questionsName || "Unknown";
 
         questionWiseMarks[`Q${qName}`] =
           (questionWiseMarks[`Q${qName}`] || 0) + mark.allottedMarks;
-        // console.log(questionWiseMarks)
+
         totalMarks += mark.allottedMarks;
       }
 
-      if (task.userId?.email) {
-        evaluatedBySet.add(task.userId.email);
+      /* -------- ✅ FIXED EVALUATOR LOGIC -------- */
+
+      let evaluatorEmail = null;
+
+      // 🔥 Priority: evaluatorId (actual evaluator)
+      if (task.evaluatorId) {
+        evaluatorEmail = userMap[task.evaluatorId.toString()];
+      }
+
+      // fallback: userId
+      else if (task.userId) {
+        evaluatorEmail = userMap[task.userId.toString()];
+      }
+
+      if (evaluatorEmail) {
+        evaluatedBySet.add(evaluatorEmail);
       }
     }
 
@@ -431,13 +465,17 @@ async function generateQuestionWiseResult({
       EVALUATEDBY: Array.from(evaluatedBySet).join(", "),
     };
   });
-  // console.log('csvData',csvData)
-  // console.log('generatingResults',generatingResults)
+
+  /* ------------------------------------------------------------ */
+  /* 🔟 MERGE WITH CSV                                            */
+  /* ------------------------------------------------------------ */
+
   const finalResults = csvData.map((row) => {
     const match = generatingResults.find(
-      (r) => String(r.BARCODE).trim() === String(row.BARCODE).trim(),
+      (r) =>
+        String(r.BARCODE).trim() === String(row.BARCODE).trim()
     );
-    // console.log(row)
+
     if (match) {
       const { BARCODE, ...resultData } = match;
 
@@ -452,7 +490,11 @@ async function generateQuestionWiseResult({
       RESULT: "Not Fully Evaluated",
     };
   });
-  // console.log(finalResults)
+
+  /* ------------------------------------------------------------ */
+  /* 1️⃣1️⃣ SAVE CSV                                               */
+  /* ------------------------------------------------------------ */
+
   const newCsvData = convertJSONToCSV(finalResults);
 
   const resultCsvPath = path.join(resultFolder, "result.csv");
@@ -460,6 +502,10 @@ async function generateQuestionWiseResult({
   fs.writeFileSync(resultCsvPath, newCsvData);
 
   fs.rmSync(tempFolder, { recursive: true, force: true });
+
+  /* ------------------------------------------------------------ */
+  /* ✅ RESPONSE                                                   */
+  /* ------------------------------------------------------------ */
 
   return res.status(200).json({
     message: "Question-wise results generated successfully.",
@@ -1137,7 +1183,7 @@ const downloadCompletedBooklets = async (req, res) => {
     /* LOAD CHECK AND CLOSE ICONS                 */
     /* ------------------------------------------ */
 
-    const checkIconBytes = fs.readFileSync(
+   const checkIconBytes = fs.readFileSync(
       path.join(process.cwd(), "Red_Check.png"),
     );
     const blackCheckBytes = fs.readFileSync(
@@ -1473,15 +1519,9 @@ const downloadCompletedBooklets = async (req, res) => {
         const line1Icon = await pdfDoc.embedPng(line1IconBytes);
         const line2Icon = await pdfDoc.embedPng(line2IconBytes);
         const line3Icon = await pdfDoc.embedPng(line3IconBytes);
-        const notattempted1Icon = await pdfDoc.embedPng(
-          not_attempted1IconBytes,
-        );
-        const notattempted2Icon = await pdfDoc.embedPng(
-          not_attempted2IconBytes,
-        );
-        const notattempted3Icon = await pdfDoc.embedPng(
-          not_attempted3IconBytes,
-        );
+        const notattempted1Icon = await pdfDoc.embedPng(not_attempted1IconBytes);
+        const notattempted2Icon = await pdfDoc.embedPng(not_attempted2IconBytes);
+        const notattempted3Icon = await pdfDoc.embedPng(not_attempted3IconBytes);
         const question1Icon = await pdfDoc.embedPng(question1IconBytes);
         const question2Icon = await pdfDoc.embedPng(question2IconBytes);
         const question3Icon = await pdfDoc.embedPng(question3IconBytes);
@@ -1623,75 +1663,75 @@ const downloadCompletedBooklets = async (req, res) => {
                 case a.iconUrl && a.iconUrl.includes("blank2"):
                   icon = blank2Icon;
                   break;
-                case a.iconUrl && a.iconUrl.includes("blank3"):
-                  icon = blank3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("check1"):
-                  icon = check1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("check2"):
-                  icon = check2Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("check3"):
-                  icon = check3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("circle1"):
-                  icon = circle1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("circle2"):
-                  icon = circle2Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("circle3"):
-                  icon = circle3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("cross1"):
-                  icon = cross1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("cross2"):
-                  icon = cross2Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("cross3"):
-                  icon = cross3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("line1"):
-                  icon = line1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("line2"):
-                  icon = line2Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("line3"):
-                  icon = line3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("not_attempt1"):
-                  icon = notattempted1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("not_attempt2"):
-                  icon = notattempted2Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("not_attempt3"):
-                  icon = notattempted3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("question1"):
-                  icon = question1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("question2"):
-                  icon = question2Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("question3"):
-                  icon = question3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("slantline1"):
-                  icon = slantline1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("slantline2"):
-                  icon = slantline2Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("slantline3"):
-                  icon = slantline3Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("close"):
-                  icon = closeIcon;
-                  break;
+                  case a.iconUrl && a.iconUrl.includes("blank3"):
+                    icon = blank3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("check1"):
+                    icon = check1Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("check2"):
+                    icon = check2Icon
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("check3"):
+                    icon = check3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("circle1"):
+                    icon = circle1Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("circle2"):
+                    icon = circle2Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("circle3"):
+                    icon = circle3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("cross1"):
+                    icon = cross1Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("cross2"):
+                    icon = cross2Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("cross3"):
+                    icon = cross3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("line1"):
+                    icon = line1Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("line2"):
+                    icon = line2Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("line3"):
+                    icon = line3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("not_attempt1"):
+                    icon = notattempted1Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("not_attempt2"):
+                    icon = notattempted2Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("not_attempt3"):
+                    icon = notattempted3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("question1"):
+                    icon = question1Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("question2"):
+                    icon = question2Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("question3"):
+                    icon = question3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("slantline1"):
+                    icon = slantline1Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("slantline2"):
+                    icon = slantline2Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("slantline3"):
+                    icon = slantline3Icon;
+                    break;
+                  case a.iconUrl && a.iconUrl.includes("close"):
+                    icon = closeIcon;
+                    break;
 
                 default:
                   icon = "noicon";
@@ -1700,16 +1740,18 @@ const downloadCompletedBooklets = async (req, res) => {
               const pageHeight = page.getHeight();
               const pageHeight2 = page2.getHeight();
 
-              if (icon !== "noicon") {
+              if(icon !== "noicon"){
                 page.drawImage(icon, {
-                  x: Number(a.x) + displacement.x,
-                  y: pageHeight - (Number(a.y) + displacement.y) - a.height,
-                  width: a.width,
-                  height: a.height,
-                });
+                x: Number(a.x) + displacement.x,
+                y: pageHeight - (Number(a.y) + displacement.y) - a.height,
+                width: a.width,
+                height: a.height,
+              });
               }
-
-              if (icon == "noicon") {
+              
+              
+              if(icon == "noicon"){
+                
                 page.drawText(`Q${a.question}`, {
                   x: Number(a.x) + displacement.x + 5,
                   y: pageHeight - (Number(a.y) + displacement.y) - 85,
@@ -1722,7 +1764,7 @@ const downloadCompletedBooklets = async (req, res) => {
                   size: 12,
                   font2,
                 });
-
+  
                 page.drawCircle({
                   x: Number(a.x) + displacement.x + 55,
                   y: pageHeight - (Number(a.y) + displacement.y) - 79,
@@ -1737,7 +1779,7 @@ const downloadCompletedBooklets = async (req, res) => {
                   borderColor: rgb(0, 0.6, 0),
                   borderWidth: 2,
                 });
-
+  
                 page.drawText(String(a.mark), {
                   x: Number(a.x) + displacement.x + 55,
                   y: pageHeight - (Number(a.y) + displacement.y) - 85,
