@@ -13,7 +13,7 @@ import authMiddleware from "../../Middlewares/authMiddleware.js";
 import uploadedMiddleware from "../../Middlewares/uploadedMiddleware.js";
 
 
-router.post('/uploadingbooklets', authMiddleware, uploadedMiddleware.single("file"), uploadingBooklets);
+router.post('/uploadingbooklets', authMiddleware, uploadedMiddleware.array("file"), uploadingBooklets);
 router.post('/processing', processingBookletsBySocket);
 router.get('/booklet', servingBooklets);
 router.delete('/rejected', removeRejectedBooklets);

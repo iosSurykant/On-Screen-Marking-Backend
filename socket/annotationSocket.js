@@ -470,6 +470,8 @@ export default function handleAnnotationSocket(io) {
           synced: data.synced !== undefined ? data.synced : false,
           mark: data.mark || 0,
           parentQuestionId: data.parentQuestionId,
+          email:data.email,
+          role:data.role
         };
 
         // Check if annotation with same timestamp ID already exists

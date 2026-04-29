@@ -958,8 +958,10 @@ const getAllBookletsName = async (req, res) => {
 };
 
 const uploadingBooklets = async (req, res) => {
+  
   try {
     const { subjectCode } = req.body;
+
 
     if (!subjectCode) {
       return res.status(400).json({ message: "subjectCode is required" });
@@ -968,14 +970,14 @@ const uploadingBooklets = async (req, res) => {
     /* =====================================================
        🚫 NORMAL FOLDER UPLOAD (MULTIPLE FILES)
     ===================================================== */
-    if (req.files && req.files.length > 1) {
-      return res.status(400).json({
-        message:
-          "Folder upload detected. Please upload the folder in ZIP format.",
-      });
-    }
+    // if (req.files && req.files.length > 1) {
+    //   return res.status(400).json({
+    //     message:
+    //       "Folder upload detected. Please upload the folder in ZIP format.",
+    //   });
+    // }
 
-    if (!req.file) {
+    if (!req.files) {
       return res.status(400).json({
         message: "Please upload a PDF or a ZIP file",
       });
@@ -992,28 +994,42 @@ const uploadingBooklets = async (req, res) => {
         message: `Subject folder ${subjectCode} not found`,
       });
     }
+    const fileExt = path.extname(req.files[0].originalname).toLowerCase();
 
-    const fileExt = path.extname(req.file.originalname).toLowerCase();
+//     const checkformat = req.files.forEach((e)=>{
+//       if(path.extname(e.originalname).toLowerCase()!='.pdf'||'.zip'){
+//         fileExt = '.pdf'
+//       }
+//     })
+
+    
+// console.log('checkformat',checkformat)
+    // console.log(fileExt)
 
     /* =====================================================
        ✅ SINGLE PDF UPLOAD
     ===================================================== */
-    if (fileExt === ".pdf") {
-      fs.renameSync(
-        req.file.path,
-        path.join(subjectFolder, req.file.originalname),
+    if(fileExt=='.pdf'){
+      req.files.forEach((e)=>{
+        fs.renameSync(
+        e.path,
+        path.join(subjectFolder, e.originalname),
       );
+      })
+      
 
       return res.status(200).json({
         message: "Single PDF uploaded successfully",
         subjectCode,
       });
     }
+      
+    
 
     /* =====================================================
        ✅ ZIP FILE UPLOAD
     ===================================================== */
-    if (fileExt === ".zip") {
+    if(fileExt=='.zip'){
       let pdfFound = false;
 
       await fs
@@ -1048,6 +1064,8 @@ const uploadingBooklets = async (req, res) => {
         subjectCode,
       });
     }
+      
+    
 
     /* =====================================================
        🚫 INVALID FILE TYPE
