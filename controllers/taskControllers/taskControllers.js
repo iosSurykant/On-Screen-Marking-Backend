@@ -16,6 +16,7 @@ import BookletAnswerPdf from "../../models/EvaluationModels/bookletAnswerPdfMode
 import BookletAnswerPdfImage from "../../models/EvaluationModels/bookletAnswerPdfImageModel.js";
 import BookletMarks from "../../models/EvaluationModels/bookletMarksModel.js";
 import BookletIcon from "../../models/EvaluationModels/bookletIconModel.js";
+import RejectBooklet from "../../models/RejectBookletModel/RejectBookletModel.js";
 
 import QuestionDefinition from "../../models/schemeModel/questionDefinitionSchema.js";
 import mongoose from "mongoose";
@@ -1239,6 +1240,17 @@ const getBookletTaskById = async (req, res) => {
     }
 
     /* ---------------------------------------------------- */
+    /* 🆕 FETCH USER NAME USING userId                      */
+    /* ---------------------------------------------------- */
+
+    const user = await User.findById(task.userId).select("name");
+
+    const taskWithUsername = {
+      ...task.toObject(),
+      username: user ? user.name : "NA",
+    };
+
+    /* ---------------------------------------------------- */
     /* 2️⃣ HANDLE TIMER LOGIC                               */
     /* ---------------------------------------------------- */
 
@@ -1337,7 +1349,7 @@ const getBookletTaskById = async (req, res) => {
     /* ---------------------------------------------------- */
 
     return res.status(200).json({
-      task,
+      task:taskWithUsername,
       remainingSeconds,
       answerPdfDetails: currentPdf,
       schemaDetails,
@@ -1494,7 +1506,7 @@ const completeBookletWise = async (req, res) => {
     const minTime = Number(schemaDoc?.minTime);
     const maxTime = Number(schemaDoc?.maxTime);
     const submittedTime = Number(submitted);
-
+7
     if (
       !Number.isFinite(minTime) ||
       !Number.isFinite(maxTime) ||
@@ -6396,6 +6408,99 @@ const ChangeScannerTaskStatus = async (req, res) => {
   }
 };
 
+const rejectIrregularBooklet = async (req, res) => {
+  try {
+    const { questiondefinitionId, subjectCode, bookletsToAssign } = req.body;
+
+    // ✅ Validation
+    if (!questiondefinitionId || !subjectCode || !bookletsToAssign?.length) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required",
+      });
+    }
+
+    // ✅ Save to DB
+    const newRejectEntry = new RejectBooklet({
+      questiondefinitionId,
+      subjectCode,
+      bookletsToAssign,
+    });
+
+    const savedData = await newRejectEntry.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Booklet rejected successfully",
+      data: savedData,
+    });
+  } catch (error) {
+    console.error("Reject Booklet Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
+const getIrregularRejectedBooklets = async (req, res) => {
+  try {
+    const rejectData = await RejectBooklet.find();
+
+    const finalResponse = [];
+
+    for (const item of rejectData) {
+      // ✅ Subject FIX
+      const subject = await Subject.findOne({
+        code: item.subjectCode,
+      });
+
+      // ✅ Question FIX
+      const questionDef = await QuestionDefinition.findById(
+        item.questiondefinitionId
+      );
+
+      for (const bookletId of item.bookletsToAssign) {
+        const booklet = await AnswerPdf.findById(bookletId);
+
+        let evaluatorName = "N/A";
+
+        // ✅ FLOW: AnswerPdf → Task → User → Name
+        if (booklet?.taskId) {
+          const task = await Task.findById(booklet.taskId);
+
+          if (task?.userId) {
+            const user = await User.findById(task.userId);
+
+            // ✅ NAME instead of EMAIL
+            evaluatorName = user?.name || user?.email || "N/A";
+          }
+        }
+
+        finalResponse.push({
+          rejectId: item._id,
+          subject: subject?.name || item.subjectCode,
+          bookletName: booklet?.answerPdfName || "N/A",
+          questionNumber: questionDef?.questionsName || "N/A",
+          evaluatorName: evaluatorName,
+          rejectedAt: item.createdAt,
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: finalResponse,
+    });
+  } catch (error) {
+    console.error("Get Rejected Booklets Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+};
+
 export {
   assigningTask,
   reassignPendingBooklets,
@@ -6430,4 +6535,6 @@ export {
   rejectBookletWise,
   assignHeadEvaluatorTask,
   ChangeScannerTaskStatus,
+  rejectIrregularBooklet,
+  getIrregularRejectedBooklets,
 };

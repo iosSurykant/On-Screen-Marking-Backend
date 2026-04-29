@@ -30,7 +30,9 @@ import {
     assignBookletWiseTask,
     getDataprincipalSide,
     assignHeadEvaluatorTask,
-    assignReviewerRollbackTask
+    assignReviewerRollbackTask,
+    rejectIrregularBooklet,
+    getIrregularRejectedBooklets
     // generatePdfForCompletedBooklet
 } from "../../controllers/taskControllers/taskControllers.js";
 
@@ -78,6 +80,9 @@ router.put("/checktaskcompletion/:id", checkTaskCompletionHandler);
 router.get('/getReassignedBooklets/:id', getReassignedbooklets);
 
 router.post("/assign-head-evaluator", assignHeadEvaluatorTask);
+
+router.post("/reject-booklet", rejectIrregularBooklet);
+router.get("/rejected-booklets", getIrregularRejectedBooklets);
 
 export default router;
 
