@@ -686,20 +686,32 @@ const processBooklets = async (subjectCode, socketNamespace) => {
     const subject = await Subject.findOne({ code: subjectCode });
     if (!subject) throw new Error("Subject not found");
 
-    const relation = await CourseSchemaRelation.findOne({ subjectId: subject._id });
+    const relation = await CourseSchemaRelation.findOne({
+      subjectId: subject._id,
+    });
     if (!relation) throw new Error("Schema relation not found");
 
     const schema = await Schema.findById(relation.schemaId);
     if (!schema) throw new Error("Schema not found");
 
     const scannedDataPath = path.join(__dirname, "scannedFolder", subjectCode);
-    const processedFolderPath = path.join(__dirname, "processedFolder", subjectCode);
-    const rejectedFolderPath = path.join(__dirname, "rejectedBookletsFolder", subjectCode);
+    const processedFolderPath = path.join(
+      __dirname,
+      "processedFolder",
+      subjectCode,
+    );
+    const rejectedFolderPath = path.join(
+      __dirname,
+      "rejectedBookletsFolder",
+      subjectCode,
+    );
 
     fs.mkdirSync(processedFolderPath, { recursive: true });
     fs.mkdirSync(rejectedFolderPath, { recursive: true });
 
-    const pdfFiles = fs.readdirSync(scannedDataPath).filter(f => f.endsWith(".pdf"));
+    const pdfFiles = fs
+      .readdirSync(scannedDataPath)
+      .filter((f) => f.endsWith(".pdf"));
 
     let processedCount = 0;
 
@@ -719,10 +731,10 @@ const processBooklets = async (subjectCode, socketNamespace) => {
         const targetFolder = isValid ? processedFolderPath : rejectedFolderPath;
 
         // const ext = path.extname(pdfFile);
-        // const base = path.basename(pdfFile, ext);  
+        // const base = path.basename(pdfFile, ext);
         // const uniqueName = `${base}_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
 
-        fs.copyFileSync(pdfPath, path.join(targetFolder, pdfFile));  //For unique name use "uniqueName" instead of "pdfFile"
+        fs.copyFileSync(pdfPath, path.join(targetFolder, pdfFile)); //For unique name use "uniqueName" instead of "pdfFile"
         fs.unlinkSync(pdfPath);
 
         if (isValid) processedCount++;
@@ -732,25 +744,25 @@ const processBooklets = async (subjectCode, socketNamespace) => {
           status: isValid ? "Processed" : "Rejected",
           totalPages,
         });
-
       } finally {
         fs.existsSync(lockFile) && fs.unlinkSync(lockFile);
       }
     }
 
-    const remaining = fs.readdirSync(scannedDataPath).filter(f => f.endsWith(".pdf"));
+    const remaining = fs
+      .readdirSync(scannedDataPath)
+      .filter((f) => f.endsWith(".pdf"));
 
     await SubjectFolderModel.updateOne(
       { folderName: subjectCode },
       {
         $set: { scannedFolder: remaining.length },
         $inc: { unAllocated: processedCount },
-      }
+      },
     );
 
     socketNamespace.emit("status", "Processing completed!");
     socketNamespace.emit("completed");
-
   } catch (err) {
     socketNamespace.emit("error", err.message);
   } finally {
@@ -768,7 +780,7 @@ const ensureSocketNamespace = (subjectCode) => {
     socket.emit("status", "Connected to processing stream");
   });
 };
-const processingBookletsBySocket = async (req, res) => { 
+const processingBookletsBySocket = async (req, res) => {
   const { subjectCode } = req.body;
 
   if (!subjectCode) {
@@ -957,29 +969,77 @@ const getAllBookletsName = async (req, res) => {
   // Read PDF files from the scanned data folder
 };
 
-const uploadingBooklets = async (req, res) => {
-  
+const mobileUpload = async (req, res) => {
+  // console.log("HITTT")
   try {
-    const { subjectCode } = req.body;
+    const { bookletCode } = req.body;
+    console.log(req.files)
 
-
-    if (!subjectCode) {
+    if (!bookletCode) {
       return res.status(400).json({ message: "subjectCode is required" });
     }
 
-    // ✅ Accept multiple files
-    const files = req.files;
+    // const findSubjectCode = await 
 
-    if (!files || files.length === 0) {
+    if (!req.files) {
       return res.status(400).json({
-        message: "Please upload at least one PDF or ZIP file",
+        message: "Please upload atleast one PDF",
       });
     }
 
     const subjectFolder = path.join(
       process.cwd(),
       "scannedFolder",
-      subjectCode
+      bookletCode,
+    );
+
+    const fileExt = path.extname(req.files[0].originalname).toLowerCase();
+
+    if (fileExt == ".pdf") {
+      req.files.forEach((e) => {
+        fs.renameSync(e.path, path.join(subjectFolder, e.originalname));
+      });
+
+      return res.status(200).json({
+        message: "Upload successful",
+        bookletCode,
+      });
+    }
+  } catch (error) {
+     return res.status(500).json({
+      message: error,
+    });
+  }
+};
+
+const uploadingBooklets = async (req, res) => {
+  try {
+    const { subjectCode } = req.body;
+
+    if (!subjectCode) {
+      return res.status(400).json({ message: "subjectCode is required" });
+    }
+
+    /* =====================================================
+       🚫 NORMAL FOLDER UPLOAD (MULTIPLE FILES)
+    ===================================================== */
+    // if (req.files && req.files.length > 1) {
+    //   return res.status(400).json({
+    //     message:
+    //       "Folder upload detected. Please upload the folder in ZIP format.",
+    //   });
+    // }
+
+    if (!req.files) {
+      return res.status(400).json({
+        message: "Please upload a PDF or a ZIP file",
+      });
+    }
+
+    const subjectFolder = path.join(
+      process.cwd(),
+      "scannedFolder",
+      subjectCode,
     );
 
     if (!fs.existsSync(subjectFolder)) {
@@ -989,79 +1049,76 @@ const uploadingBooklets = async (req, res) => {
     }
     const fileExt = path.extname(req.files[0].originalname).toLowerCase();
 
-    let uploadedCount = 0;
-    let zipProcessed = false;
+    //     const checkformat = req.files.forEach((e)=>{
+    //       if(path.extname(e.originalname).toLowerCase()!='.pdf'||'.zip'){
+    //         fileExt = '.pdf'
+    //       }
+    //     })
 
-    for (const file of files) {
-      const fileExt = path.extname(file.originalname).toLowerCase();
+    // console.log('checkformat',checkformat)
+    // console.log(fileExt)
 
-      /* ==========================================
-         ✅ HANDLE PDF
-      ========================================== */
-      if (fileExt === ".pdf") {
-        fs.renameSync(
-          file.path,
-          path.join(subjectFolder, file.originalname)
-        );
-        uploadedCount++;
-      }
+    /* =====================================================
+       ✅ SINGLE PDF UPLOAD
+    ===================================================== */
+    if (fileExt == ".pdf") {
+      req.files.forEach((e) => {
+        fs.renameSync(e.path, path.join(subjectFolder, e.originalname));
+      });
 
-      /* ==========================================
-         ✅ HANDLE ZIP
-      ========================================== */
-      else if (fileExt === ".zip") {
-        zipProcessed = true;
-        let pdfFoundInZip = false;
+      return res.status(200).json({
+        message: "Single PDF uploaded successfully",
+        subjectCode,
+      });
+    }
 
-        await fs
-          .createReadStream(file.path)
-          .pipe(unzipper.Parse())
-          .on("entry", (entry) => {
-            const ext = path.extname(entry.path).toLowerCase();
+    /* =====================================================
+       ✅ ZIP FILE UPLOAD
+    ===================================================== */
+    if (fileExt == ".zip") {
+      let pdfFound = false;
 
-            if (ext === ".pdf") {
-              pdfFoundInZip = true;
-              entry.pipe(
-                fs.createWriteStream(
-                  path.join(subjectFolder, path.basename(entry.path))
-                )
-              );
-              uploadedCount++;
-            } else {
-              entry.autodrain();
-            }
-          })
-          .promise();
+      await fs
+        .createReadStream(req.file.path)
+        .pipe(unzipper.Parse())
+        .on("entry", (entry) => {
+          const ext = path.extname(entry.path).toLowerCase();
 
-        fs.unlinkSync(file.path);
+          if (ext === ".pdf") {
+            pdfFound = true;
+            entry.pipe(
+              fs.createWriteStream(
+                path.join(subjectFolder, path.basename(entry.path)),
+              ),
+            );
+          } else {
+            entry.autodrain();
+          }
+        })
+        .promise();
 
-        if (!pdfFoundInZip) {
-          return res.status(400).json({
-            message: `ZIP (${file.originalname}) does not contain any PDF files`,
-          });
-        }
-      }
+      fs.unlinkSync(req.file.path);
 
-      /* ==========================================
-         ❌ INVALID FILE
-      ========================================== */
-      else {
-        fs.unlinkSync(file.path);
+      if (!pdfFound) {
         return res.status(400).json({
-          message: `Invalid file type: ${file.originalname}`,
+          message: "ZIP file does not contain any PDF files",
         });
       }
+
+      return res.status(200).json({
+        message: "ZIP extracted and PDFs uploaded successfully",
+        subjectCode,
+      });
     }
-      
-    
 
-    return res.status(200).json({
-      message: "Files uploaded successfully",
-      totalFilesProcessed: uploadedCount,
-      zipProcessed,
-      subjectCode,
+    /* =====================================================
+       🚫 INVALID FILE TYPE
+    ===================================================== */
+    fs.unlinkSync(req.file.path);
+
+    return res.status(400).json({
+      message: "Only PDF or ZIP files are allowed",
     });
-
   } catch (error) {
     console.error("Upload error:", error);
     return res.status(500).json({
@@ -1198,7 +1255,11 @@ const deleteBookletsByRange = async (req, res) => {
     //  Paths
     const scannedPath = path.join(__dirname, "scannedFolder", subjectCode);
     const processedPath = path.join(__dirname, "processedFolder", subjectCode);
-    const rejectedPath = path.join(__dirname, "rejectedBookletsFolder", subjectCode);
+    const rejectedPath = path.join(
+      __dirname,
+      "rejectedBookletsFolder",
+      subjectCode,
+    );
 
     let deletedFiles = [];
 
@@ -1206,9 +1267,11 @@ const deleteBookletsByRange = async (req, res) => {
     const deleteFromFolder = (folderPath) => {
       if (!fs.existsSync(folderPath)) return;
 
-      const files = fs.readdirSync(folderPath).filter(f => f.endsWith(".pdf"));
+      const files = fs
+        .readdirSync(folderPath)
+        .filter((f) => f.endsWith(".pdf"));
 
-      files.forEach(file => {
+      files.forEach((file) => {
         // Extract booklet number from filename
         const match = file.match(/\d+/);
         if (!match) return;
@@ -1230,19 +1293,19 @@ const deleteBookletsByRange = async (req, res) => {
 
     //  Delete from DB (AnswerPdf)
     const answerPdfs = await AnswerPdf.find({
-      answerPdfName: { $in: deletedFiles }
+      answerPdfName: { $in: deletedFiles },
     });
 
-    const taskIds = answerPdfs.map(a => a.taskId);
+    const taskIds = answerPdfs.map((a) => a.taskId);
 
     await AnswerPdf.deleteMany({
-      answerPdfName: { $in: deletedFiles }
+      answerPdfName: { $in: deletedFiles },
     });
 
     //  Update Tasks (reduce totalBooklets)
     await Task.updateMany(
       { _id: { $in: taskIds } },
-      { $inc: { totalBooklets: -1 } }
+      { $inc: { totalBooklets: -1 } },
     );
 
     // Update Folder Stats
@@ -1250,14 +1313,13 @@ const deleteBookletsByRange = async (req, res) => {
       { folderName: subjectCode },
       {
         $inc: { unAllocated: -deletedFiles.length },
-      }
+      },
     );
 
     return res.status(200).json({
       message: `${deletedFiles.length} booklets deleted successfully`,
       deletedFiles,
     });
-
   } catch (error) {
     console.error("Delete error:", error);
     return res.status(500).json({
@@ -1274,4 +1336,5 @@ export {
   deleteBookletsByRange,
   getAllBookletsName,
   processingBookletsManually,
+  mobileUpload,
 };
