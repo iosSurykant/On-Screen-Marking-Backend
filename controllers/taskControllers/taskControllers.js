@@ -32,7 +32,7 @@ import ReviewerTask from "../../models/taskModels/reviewerTaskModel.js";
 
 import ScannerTask from "../../models/taskModels/scannerTaskModel.js";
 import CourseSchemaRelation from "../../models/subjectSchemaRelationModel/subjectSchemaRelationModel.js";
-
+import pLimit from "p-limit";
 // import { ConversationsMessageFile } from "sib-api-v3-sdk";
 const extractQuestionImages = async (
   coordinates,
@@ -621,6 +621,18 @@ const extractQuestionImages = async (
 // };
 
 const assigningTaskWorkers = async (jobs) => {
+  console.log("jobs", jobs);
+
+  const grouped = jobs.reduce((acc, job) => {
+    if (!acc[job.subjectCode]) {
+      acc[job.subjectCode] = [];
+    }
+
+    acc[job.subjectCode].push(job);
+
+    return acc;
+  }, {});
+
   try {
     for (const job of jobs) {
       const { userId, subjectCode, questiondefinitionId, taskId } = job;
@@ -635,14 +647,14 @@ const assigningTaskWorkers = async (jobs) => {
       // 🔹 1. Fetch task
       const task = await Task.findById(taskId);
       if (!task) {
-        console.warn(`Task not found: ${taskId}`);
+        console.log(`Task not found: ${taskId}`);
         continue;
       }
 
       // 🔹 2. Fetch subject + schema
       const subject = await Subject.findOne({ code: subjectCode });
       if (!subject) {
-        console.warn(`Subject not found: ${subjectCode}`);
+        console.log(`Subject not found: ${subjectCode}`);
         continue;
       }
 
@@ -650,13 +662,13 @@ const assigningTaskWorkers = async (jobs) => {
         subjectId: subject._id,
       });
       if (!courseSchemaRel) {
-        console.warn("Schema relation not found");
+        console.log("Schema relation not found");
         continue;
       }
 
       const schemaDetails = await Schema.findById(courseSchemaRel.schemaId);
       if (!schemaDetails) {
-        console.warn("Schema not found");
+        console.log("Schema not found");
         continue;
       }
 
@@ -664,7 +676,7 @@ const assigningTaskWorkers = async (jobs) => {
       const rootFolder = path.join(__dirname, "processedFolder");
       const subjectFolder = path.join(rootFolder, task.subjectCode);
       if (!fs.existsSync(subjectFolder)) {
-        console.warn(`Subject folder missing: ${subjectFolder}`);
+        console.log(`Subject folder missing: ${subjectFolder}`);
         continue;
       }
 
@@ -683,7 +695,7 @@ const assigningTaskWorkers = async (jobs) => {
       });
 
       if (!assignedPdfs.length) {
-        console.warn(`No PDFs assigned for task ${taskId}`);
+        console.log(`No PDFs assigned for task ${taskId}`);
         continue;
       }
 
@@ -693,70 +705,86 @@ const assigningTaskWorkers = async (jobs) => {
 
       const questionPages = new Set(questionDef.page);
 
-      for (const pdfDoc of assignedPdfs) {
-        const pdfPath = path.join(subjectFolder, pdfDoc.answerPdfName);
-        if (!fs.existsSync(pdfPath)) continue;
+      const limit = pLimit(20);
 
-        const bookletName = path.basename(pdfDoc.answerPdfName, ".pdf");
-        const bookletFolder = path.join(extractedBookletsFolder, bookletName);
-        fs.mkdirSync(bookletFolder, { recursive: true });
+      await Promise.all(
+        assignedPdfs.map((pdfDoc) =>
+          limit(async () => {
+            const pdfPath = path.join(subjectFolder, pdfDoc.answerPdfName);
 
-        console.log(`📤 Extracting images from ${pdfDoc.answerPdfName}`);
+            if (!fs.existsSync(pdfPath)) return;
 
-        const alreadyExtracted = await AnswerPdfImage.exists({
-          answerPdfId: pdfDoc._id,
-          questiondefinitionId,
-        });
+            const bookletName = path.basename(pdfDoc.answerPdfName, ".pdf");
 
-        if (alreadyExtracted) {
-          console.log(
-            `⏭️ Images already extracted for ${pdfDoc.answerPdfName}, skipping`,
-          );
-          continue;
-        }
+            const bookletFolder = path.join(
+              extractedBookletsFolder,
+              bookletName,
+            );
 
-        // 🔐 Filesystem lock (SECOND)
-        const lockFile = path.join(bookletFolder, ".extract.lock");
-        if (fs.existsSync(lockFile)) {
-          console.log(
-            `🔒 Extraction already in progress for ${pdfDoc.answerPdfName}`,
-          );
-          continue;
-        }
-        fs.writeFileSync(lockFile, "LOCK");
-        try {
-          console.log(`📤 Extracting images from ${pdfDoc.answerPdfName}`);
+            fs.mkdirSync(bookletFolder, { recursive: true });
 
-          const imageFiles = await extractImagesFromPdf(pdfPath, bookletFolder);
+            const alreadyExtracted = await AnswerPdfImage.exists({
+              answerPdfId: pdfDoc._id,
+              questiondefinitionId,
+            });
 
-          const imageDocs = imageFiles
-            .map((img) => {
-              const match = img.match(/image_(\d+)\.png$/);
-              if (!match) return null;
+            if (alreadyExtracted) {
+              console.log(`Skipping ${pdfDoc.answerPdfName}`);
+              return;
+            }
 
-              const pageNumber = parseInt(match[1], 10);
-              if (!questionPages.has(pageNumber)) return null;
+            const lockFile = path.join(bookletFolder, ".extract.lock");
 
-              return {
-                answerPdfId: pdfDoc._id,
-                questiondefinitionId,
-                name: img,
-                page: pageNumber,
-                status: "notVisited",
-              };
-            })
-            .filter(Boolean);
+            if (fs.existsSync(lockFile)) {
+              console.log(`Locked ${pdfDoc.answerPdfName}`);
+              return;
+            }
 
-          if (imageDocs.length) {
-            await AnswerPdfImage.insertMany(imageDocs);
-          }
-        } finally {
-          // 🔓 Always release lock
-          if (fs.existsSync(lockFile)) {
-            fs.unlinkSync(lockFile);
-          }
-        }
-      }
+            fs.writeFileSync(lockFile, "LOCK");
+
+            try {
+              console.log(`📤 Extracting ${pdfDoc.answerPdfName}`);
+
+              const imageFiles = await extractImagesFromPdf(
+                pdfPath,
+                bookletFolder,
+              );
+
+              const imageDocs = imageFiles
+                .map((img) => {
+                  const match = img.match(/image_(\d+)\.png$/);
+
+                  if (!match) return null;
+
+                  const pageNumber = parseInt(match[1], 10);
+
+                  if (!questionPages.has(pageNumber)) {
+                    return null;
+                  }
+
+                  return {
+                    answerPdfId: pdfDoc._id,
+                    questiondefinitionId,
+                    name: img,
+                    page: pageNumber,
+                    status: "notVisited",
+                  };
+                })
+                .filter(Boolean);
+
+              if (imageDocs.length) {
+                await AnswerPdfImage.insertMany(imageDocs);
+              }
+            } catch (err) {
+              console.error(`❌ Failed ${pdfDoc.answerPdfName}`, err);
+            } finally {
+              if (fs.existsSync(lockFile)) {
+                fs.unlinkSync(lockFile);
+              }
+            }
+          }),
+        ),
+      );
 
       console.log(`✅ Completed extraction for task ${taskId}`);
     }
@@ -1349,7 +1377,7 @@ const getBookletTaskById = async (req, res) => {
     /* ---------------------------------------------------- */
 
     return res.status(200).json({
-      task:taskWithUsername,
+      task: taskWithUsername,
       remainingSeconds,
       answerPdfDetails: currentPdf,
       schemaDetails,
@@ -1506,7 +1534,7 @@ const completeBookletWise = async (req, res) => {
     const minTime = Number(schemaDoc?.minTime);
     const maxTime = Number(schemaDoc?.maxTime);
     const submittedTime = Number(submitted);
-7
+    7;
     if (
       !Number.isFinite(minTime) ||
       !Number.isFinite(maxTime) ||
@@ -3798,7 +3826,6 @@ const getAssignTaskById = async (req, res) => {
 
     // Get assigned PDFs
     const assignedPdfs = await AnswerPdf.find({ taskId: task._id });
-
     if (assignedPdfs.length === 0) {
       return res
         .status(404)
@@ -3844,6 +3871,7 @@ const getAssignTaskById = async (req, res) => {
     // ✅ Build base URL for HTTP access
     const baseUrl = `${req.protocol}://${req.get("host")}`;
 
+    console.log("assigned pdf data", baseUrl);
     const questionImagesFolderUrl = `processedFolder/${task.subjectCode}/extractedBooklets/${bookletName}/questionImages/${task.questiondefinitionId}`;
 
     // ✅ Check if images already extracted
@@ -3865,12 +3893,14 @@ const getAssignTaskById = async (req, res) => {
     //   questiondefinitionId: task.questiondefinitionId, // ← ADD THIS
     // }).sort({ page: 1 });
 
-    console.log(
-      `🖼️ EXISTING EXTRACTED IMAGES IN DATABASE: ${extractedImages.length}`,
-    );
+    // console.log(
+    //   `🖼️ EXISTING EXTRACTED IMAGES IN DATABASE: ${extractedImages.length}`,
+    // );
     const questionDef = await QuestionDefinition.findById(
       task.questiondefinitionId,
     );
+
+    console.log("questionDef", questionDef);
 
     const questionPages = new Set(questionDef.page);
     console.log("questionPages", questionPages);
@@ -4803,7 +4833,7 @@ const reassignBookletsCore = async ({
   session,
 }) => {
   const isBooklet = taskType === "booklet";
-  
+
   const TaskModel = isBooklet ? BookletTask : Task;
   const PdfModel = isBooklet ? BookletAnswerPdf : AnswerPdf;
 
@@ -5285,7 +5315,7 @@ const completedBookletHandler = async (req, res) => {
     const { answerpdfid, userId } = req.params;
     const { submitted } = req.body;
 
-    console.log('userId',userId)
+    console.log("userId", userId);
 
     console.log("User Id for the booklet is this -:", userId);
 
@@ -5651,7 +5681,7 @@ const completedBookletHandler = async (req, res) => {
       await task.save();
 
       const evaluator = await User.findById(userId).select("deputyHead");
-      console.log('evaluator', evaluator)
+      console.log("evaluator", evaluator);
       const deputyHeadId = evaluator?.deputyHead;
 
       if (!deputyHeadId) {
@@ -5661,7 +5691,7 @@ const completedBookletHandler = async (req, res) => {
 
         try {
           await session.startTransaction();
-         
+
           await reassignBookletsCore({
             fromTaskId: task._id,
             toUserId: deputyHeadId,
@@ -6457,7 +6487,7 @@ const getIrregularRejectedBooklets = async (req, res) => {
 
       // ✅ Question FIX
       const questionDef = await QuestionDefinition.findById(
-        item.questiondefinitionId
+        item.questiondefinitionId,
       );
 
       for (const bookletId of item.bookletsToAssign) {
