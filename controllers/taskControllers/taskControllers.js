@@ -705,7 +705,7 @@ const assigningTaskWorkers = async (jobs) => {
 
       const questionPages = new Set(questionDef.page);
 
-      const limit = pLimit(20);
+      const limit = pLimit(5);
 
       await Promise.all(
         assignedPdfs.map((pdfDoc) =>
@@ -720,8 +720,9 @@ const assigningTaskWorkers = async (jobs) => {
               extractedBookletsFolder,
               bookletName,
             );
-
-            fs.mkdirSync(bookletFolder, { recursive: true });
+            if (!fs.existsSync(bookletFolder)) {
+              fs.mkdirSync(bookletFolder, { recursive: true });
+            }
 
             const alreadyExtracted = await AnswerPdfImage.exists({
               answerPdfId: pdfDoc._id,
@@ -733,24 +734,34 @@ const assigningTaskWorkers = async (jobs) => {
               return;
             }
 
+            const imageAlreadyExist = fs.readdirSync(bookletFolder);
+
             const lockFile = path.join(bookletFolder, ".extract.lock");
+            if (imageAlreadyExist.length == 0) {
 
-            if (fs.existsSync(lockFile)) {
-              console.log(`Locked ${pdfDoc.answerPdfName}`);
-              return;
+              if (fs.existsSync(lockFile)) {
+                console.log(`Locked ${pdfDoc.answerPdfName}`);
+                return;
+              }
+
+              fs.writeFileSync(lockFile, "LOCK");
             }
-
-            fs.writeFileSync(lockFile, "LOCK");
 
             try {
               console.log(`📤 Extracting ${pdfDoc.answerPdfName}`);
 
-              const imageFiles = await extractImagesFromPdf(
-                pdfPath,
-                bookletFolder,
-              );
+              let imageFiles;
 
-              const imageDocs = imageFiles
+              if (imageAlreadyExist.length == 0) {
+                imageFiles = await extractImagesFromPdf(pdfPath, bookletFolder);
+              }
+
+              const images =
+                imageAlreadyExist == 0 ? imageFiles : imageAlreadyExist;
+
+              console.log("Image", images);
+
+              const imageDocs = images
                 .map((img) => {
                   const match = img.match(/image_(\d+)\.png$/);
 
@@ -771,6 +782,8 @@ const assigningTaskWorkers = async (jobs) => {
                   };
                 })
                 .filter(Boolean);
+
+              console.log("imageDocs", imageDocs);
 
               if (imageDocs.length) {
                 await AnswerPdfImage.insertMany(imageDocs);
