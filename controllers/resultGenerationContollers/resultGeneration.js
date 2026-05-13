@@ -14,6 +14,7 @@ import { isValidObjectId } from "../../services/mongoIdValidation.js";
 
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { createCanvas, loadImage } from "canvas";
+import pLimit from "p-limit";
 
 // const generateResult = async (req, res) => {
 //   const { subjectcode } = req.body;
@@ -222,7 +223,7 @@ const generateResult = async (req, res) => {
 
     const subject = await Subject.findOne({ code: subjectcode });
 
-  if (!subject) {
+    if (!subject) {
       return res.status(404).json({ message: "Subject not found." });
     }
 
@@ -300,7 +301,7 @@ async function generateQuestionWiseResult({
   }
 
   const uniqueQuestions = new Set(
-    tasks.map((t) => t.questiondefinitionId.toString())
+    tasks.map((t) => t.questiondefinitionId.toString()),
   );
   // console.log('uniqueQuestions',uniqueQuestions)
 
@@ -349,12 +350,10 @@ async function generateQuestionWiseResult({
   /* 6️⃣ FILTER TASKS (ONLY USED ONES)                            */
   /* ------------------------------------------------------------ */
 
-  const usedTaskIds = allAnswerPdfs.map((item) =>
-    item.taskId.toString()
-  );
+  const usedTaskIds = allAnswerPdfs.map((item) => item.taskId.toString());
 
   const filteredTasks = tasks.filter((task) =>
-    usedTaskIds.includes(task._id.toString())
+    usedTaskIds.includes(task._id.toString()),
   );
 
   /* ------------------------------------------------------------ */
@@ -396,7 +395,7 @@ async function generateQuestionWiseResult({
         (m) =>
           m.answerPdfId.toString() === pdf._id.toString() &&
           m.questionDefinitionId._id.toString() ===
-            task.questiondefinitionId.toString()
+            task.questiondefinitionId.toString(),
       );
 
       if (!marksExist) {
@@ -424,14 +423,13 @@ async function generateQuestionWiseResult({
       if (!pdf) continue;
 
       const marks = allMarks.filter(
-        (m) => m.answerPdfId.toString() === pdf._id.toString()
+        (m) => m.answerPdfId.toString() === pdf._id.toString(),
       );
 
       /* -------- MARKS CALCULATION -------- */
 
       for (const mark of marks) {
-        const qName =
-          mark.questionDefinitionId?.questionsName || "Unknown";
+        const qName = mark.questionDefinitionId?.questionsName || "Unknown";
 
         questionWiseMarks[`Q${qName}`] =
           (questionWiseMarks[`Q${qName}`] || 0) + mark.allottedMarks;
@@ -472,8 +470,7 @@ async function generateQuestionWiseResult({
 
   const finalResults = csvData.map((row) => {
     const match = generatingResults.find(
-      (r) =>
-        String(r.BARCODE).trim() === String(row.BARCODE).trim()
+      (r) => String(r.BARCODE).trim() === String(row.BARCODE).trim(),
     );
 
     if (match) {
@@ -1183,7 +1180,7 @@ const downloadCompletedBooklets = async (req, res) => {
     /* LOAD CHECK AND CLOSE ICONS                 */
     /* ------------------------------------------ */
 
-   const checkIconBytes = fs.readFileSync(
+    const checkIconBytes = fs.readFileSync(
       path.join(process.cwd(), "Red_Check.png"),
     );
     const blackCheckBytes = fs.readFileSync(
@@ -1476,461 +1473,627 @@ const downloadCompletedBooklets = async (req, res) => {
       const result = Object.values(grouped);
       console.log("Grouped Booklets:", result);
 
-    await Promise.all ( 
-      result.map(async (booklet) => {
-        console.log('booklet',booklet);
-        const imageFolder = path.join(
-          "processedFolder",
-          subjectCode,
-          "extractedBooklets",
-          booklet.answerPdfName.replace(".pdf", ""),
-        );
+      const limit = pLimit(10); // Limit concurrency to 2
 
-        if (!fs.existsSync(imageFolder)) {
-          console.log("Image folder not found:", imageFolder);
-          return;
-        }
+      await Promise.all(
+        result.map(async (booklet) =>
+          limit(async () => {
+            console.log("booklet", booklet);
 
-        const imageFiles = fs
-          .readdirSync(imageFolder)
-          .filter((f) => f.endsWith(".png"))
-          .sort((a, b) => {
-            const n1 = Number(a.match(/\d+/)[0]);
-            const n2 = Number(b.match(/\d+/)[0]);
-            return n1 - n2;
-          });
+            const documentMeta = await Promise.all(
+              booklet.documents.map(async (value) => {
+                const [task, questionDef] = await Promise.all([
+                  Task.findById(value.taskId).lean(),
+                  QuestionDefinition.findById(
+                    value.questionDefinitionId,
+                  ).lean(),
+                ]);
 
-        const pdfDoc = await PDFDocument.create();
-        const pdfDocWithoutIcon = await PDFDocument.create();
+                const userRole = await User.findById(task.userId).lean();
 
-        const checkIcon = await pdfDoc.embedPng(checkIconBytes);
-        const closeIcon = await pdfDoc.embedPng(closeIconBytes);
-        const blackCheckIcon = await pdfDoc.embedPng(blackCheckBytes);
-        const blank1Icon = await pdfDoc.embedPng(blank1IconBytes);
-        const blank2Icon = await pdfDoc.embedPng(blank2IconBytes);
-        const blank3Icon = await pdfDoc.embedPng(blank3IconBytes);
-        const check1Icon = await pdfDoc.embedPng(check1IconBytes);
-        const check2Icon = await pdfDoc.embedPng(check2IconBytes);
-        const check3Icon = await pdfDoc.embedPng(check3IconBytes);
-        const circle1Icon = await pdfDoc.embedPng(circle1IconBytes);
-        const circle2Icon = await pdfDoc.embedPng(circle2IconBytes);
-        const circle3Icon = await pdfDoc.embedPng(circle3IconBytes);
-        const cross1Icon = await pdfDoc.embedPng(cross1IconBytes);
-        const cross2Icon = await pdfDoc.embedPng(cross2IconBytes);
-        const cross3Icon = await pdfDoc.embedPng(cross3IconBytes);
-        const line1Icon = await pdfDoc.embedPng(line1IconBytes);
-        const line2Icon = await pdfDoc.embedPng(line2IconBytes);
-        const line3Icon = await pdfDoc.embedPng(line3IconBytes);
-        const notattempted1Icon = await pdfDoc.embedPng(not_attempted1IconBytes);
-        const notattempted2Icon = await pdfDoc.embedPng(not_attempted2IconBytes);
-        const notattempted3Icon = await pdfDoc.embedPng(not_attempted3IconBytes);
-        const question1Icon = await pdfDoc.embedPng(question1IconBytes);
-        const question2Icon = await pdfDoc.embedPng(question2IconBytes);
-        const question3Icon = await pdfDoc.embedPng(question3IconBytes);
-        const slantline1Icon = await pdfDoc.embedPng(slantline1IconBytes);
-        const slantline2Icon = await pdfDoc.embedPng(slantline2IconBytes);
-        const slantline3Icon = await pdfDoc.embedPng(slantline3IconBytes);
-
-        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-        const font2 = await pdfDocWithoutIcon.embedFont(
-          StandardFonts.Helvetica,
-        );
-        const fontBold2 = await pdfDocWithoutIcon.embedFont(
-          StandardFonts.HelveticaBold,
-        );
-
-        let summaryData = [];
-        let users = []
-        let totalMarks = 0;
-
-        // for (const value of booklet.documents) {
-        //   const task = await Task.findById(value.taskId);
-        //   const userId = task.userId;
-        //   console.log(userId);
-        //   let annotationPath;
-
-        //   if (task.evaluatorId) {
-        //     annotationPath = path.join(
-        //       "Annotations",
-        //       String(task.evaluatorId),
-        //       String(value._id),
-        //       String(userId),
-        //     );
-        //   } else {
-        //     annotationPath = path.join(
-        //       "Annotations",
-        //       String(userId),
-        //       String(value._id),
-        //     );
-        //   }
-
-
-        let allAnnotations = []
-
-        for (let i = 0; i < imageFiles.length; i++) {
-          const imageName = imageFiles[i];
-          const pageNumber = Number(imageName.match(/\d+/)[0]);
-
-          const imagePath = path.join(imageFolder, imageName);
-          const imgBytes = fs.readFileSync(imagePath);
-          const png = await pdfDoc.embedPng(imgBytes);
-          const png2 = await pdfDocWithoutIcon.embedPng(imgBytes);
-          console.log(png.width, png.height);
-          const page = pdfDoc.addPage([png.width, png.height]);
-          const page2 = pdfDocWithoutIcon.addPage([png2.width, png2.height]);
-
-          page.drawImage(png, {
-            x: 0,
-            y: 0,
-            width: png.width,
-            height: png.height,
-          });
-          page2.drawImage(png2, {
-            x: 0,
-            y: 0,
-            width: png2.width,
-            height: png2.height,
-          });
-
-          // 🔥 LOOP DOCUMENTS INSIDE PAGE
-          for (const value of booklet.documents) {
-            // console.log(value)
-            const task = await Task.findById(value.taskId);
-            const userId = task.userId;
-
-            const userRole = await User.findById(userId);
-            const questionDef = await QuestionDefinition.findById(
-              value.questionDefinitionId,
-            );
-            // console.log(questionDef)
-
-            let annotationPath;
-
-            if (userRole?.role === "headevaluator") {
-              annotationPath = path.join(
-                "Annotations",
-                String(task.evaluatorId),
-                String(value._id),
-                String(userId),
-              );
-            } else {
-              annotationPath = path.join(
-                "Annotations",
-                String(userId),
-                String(value._id),
-              );
-            }
-
-            const jsonPath = path.join(
-              annotationPath,
-              `page_${pageNumber}.json`,
+                return {
+                  value,
+                  task,
+                  questionDef,
+                  userRole,
+                };
+              }),
             );
 
-            if (!fs.existsSync(jsonPath)) continue;
+            const imageFolder = path.join(
+              "processedFolder",
+              subjectCode,
+              "extractedBooklets",
+              booklet.answerPdfName.replace(".pdf", ""),
+            );
 
-            const json = JSON.parse(fs.readFileSync(jsonPath));
-            const annotations = json.annotations || [];
-            // console.log( 'annotations',annotations)
-
-            let displacement;
-
-            if (
-              questionDef.page.includes(pageNumber) &&
-              questionDef.coordinates.partialAreas &&
-              questionDef.coordinates.partialAreas.hasOwnProperty(pageNumber)
-            ) {
-              console.log("trueeeeeeeeeeeeeeeeeeeeeeeeeeeee");
-              displacement =
-                questionDef.coordinates.partialAreas[pageNumber][0];
-            } else {
-              console.log("falseeeeeeeeeeeeeeeeeeeeeeeeeee");
-              displacement = { x: 0, y: 0 };
+            if (!fs.existsSync(imageFolder)) {
+              console.log("Image folder not found:", imageFolder);
+              return;
             }
-            for (const a of annotations) {
-              let icon;
-              // console.log("annotations", a);
 
-              switch (true) {
-                case a.iconUrl && a.iconUrl.includes("Red"):
-                  icon = checkIcon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("Black"):
-                  icon = blackCheckIcon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("blank1"):
-                  icon = blank1Icon;
-                  break;
-                case a.iconUrl && a.iconUrl.includes("blank2"):
-                  icon = blank2Icon;
-                  break;
-                  case a.iconUrl && a.iconUrl.includes("blank3"):
-                    icon = blank3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("check1"):
-                    icon = check1Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("check2"):
-                    icon = check2Icon
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("check3"):
-                    icon = check3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("circle1"):
-                    icon = circle1Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("circle2"):
-                    icon = circle2Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("circle3"):
-                    icon = circle3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("cross1"):
-                    icon = cross1Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("cross2"):
-                    icon = cross2Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("cross3"):
-                    icon = cross3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("line1"):
-                    icon = line1Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("line2"):
-                    icon = line2Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("line3"):
-                    icon = line3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("not_attempt1"):
-                    icon = notattempted1Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("not_attempt2"):
-                    icon = notattempted2Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("not_attempt3"):
-                    icon = notattempted3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("question1"):
-                    icon = question1Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("question2"):
-                    icon = question2Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("question3"):
-                    icon = question3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("slantline1"):
-                    icon = slantline1Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("slantline2"):
-                    icon = slantline2Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("slantline3"):
-                    icon = slantline3Icon;
-                    break;
-                  case a.iconUrl && a.iconUrl.includes("close"):
-                    icon = closeIcon;
-                    break;
-
-                default:
-                  icon = "noicon";
-              }
-
-              const pageHeight = page.getHeight();
-              const pageHeight2 = page2.getHeight();
-
-              if(icon !== "noicon"){
-                page.drawImage(icon, {
-                x: Number(a.x) + displacement.x,
-                y: pageHeight - (Number(a.y) + displacement.y) - a.height,
-                width: a.width,
-                height: a.height,
-              });
-              }
-              
-              
-              if(icon == "noicon"){
-                
-                page.drawText(`Q${a.question}`, {
-                  x: Number(a.x) + displacement.x + 5,
-                  y: pageHeight - (Number(a.y) + displacement.y) - 85,
-                  size: 12,
-                  font,
-                });
-                page2.drawText(`Q${a.question}`, {
-                  x: Number(a.x) + displacement.x + 5,
-                  y: pageHeight2 - (Number(a.y) + displacement.y) - 85,
-                  size: 12,
-                  font2,
-                });
-  
-                page.drawCircle({
-                  x: Number(a.x) + displacement.x + 55,
-                  y: pageHeight - (Number(a.y) + displacement.y) - 79,
-                  size: 10,
-                  borderColor: rgb(0, 0.6, 0),
-                  borderWidth: 2,
-                });
-                page2.drawCircle({
-                  x: Number(a.x) + displacement.x + 55,
-                  y: pageHeight2 - (Number(a.y) + displacement.y) - 79,
-                  size: 10,
-                  borderColor: rgb(0, 0.6, 0),
-                  borderWidth: 2,
-                });
-  
-                page.drawText(String(a.mark), {
-                  x: Number(a.x) + displacement.x + 55,
-                  y: pageHeight - (Number(a.y) + displacement.y) - 85,
-                  size: 12,
-                  font,
-                });
-                page2.drawText(String(a.mark), {
-                  x: Number(a.x) + displacement.x + 55,
-                  y: pageHeight2 - (Number(a.y) + displacement.y) - 85,
-                  size: 12,
-                  font2,
-                });
-              }
-
-              summaryData.push({
-                question: `Q${a.question}`,
-                marks: a.mark,
-                page: pageNumber,
-                time: a.timeStamps || "",
-                user:a.email
+            const imageFiles = fs
+              .readdirSync(imageFolder)
+              .filter((f) => f.endsWith(".png"))
+              .sort((a, b) => {
+                const n1 = Number(a.match(/\d+/)[0]);
+                const n2 = Number(b.match(/\d+/)[0]);
+                return n1 - n2;
               });
 
-              if(!users.includes(a.email)){
-                users.push(a.email)
+            const pdfDoc = await PDFDocument.create();
+            const pdfDocWithoutIcon = await PDFDocument.create();
+
+            const [
+              checkIcon,
+              closeIcon,
+              blackCheckIcon,
+              blank1Icon,
+              blank2Icon,
+              blank3Icon,
+              check1Icon,
+              check2Icon,
+              check3Icon,
+              circle1Icon,
+              circle2Icon,
+              circle3Icon,
+              cross1Icon,
+              cross2Icon,
+              cross3Icon,
+              line1Icon,
+              line2Icon,
+              line3Icon,
+              notattempted1Icon,
+              notattempted2Icon,
+              notattempted3Icon,
+              question1Icon,
+              question2Icon,
+              question3Icon,
+              slantline1Icon,
+              slantline2Icon,
+              slantline3Icon,
+            ] = await Promise.all([
+              pdfDoc.embedPng(checkIconBytes),
+              pdfDoc.embedPng(closeIconBytes),
+              pdfDoc.embedPng(blackCheckBytes),
+              pdfDoc.embedPng(blank1IconBytes),
+              pdfDoc.embedPng(blank2IconBytes),
+              pdfDoc.embedPng(blank3IconBytes),
+              pdfDoc.embedPng(check1IconBytes),
+              pdfDoc.embedPng(check2IconBytes),
+              pdfDoc.embedPng(check3IconBytes),
+              pdfDoc.embedPng(circle1IconBytes),
+              pdfDoc.embedPng(circle2IconBytes),
+              pdfDoc.embedPng(circle3IconBytes),
+              pdfDoc.embedPng(cross1IconBytes),
+              pdfDoc.embedPng(cross2IconBytes),
+              pdfDoc.embedPng(cross3IconBytes),
+              pdfDoc.embedPng(line1IconBytes),
+              pdfDoc.embedPng(line2IconBytes),
+              pdfDoc.embedPng(line3IconBytes),
+              pdfDoc.embedPng(not_attempted1IconBytes),
+              pdfDoc.embedPng(not_attempted2IconBytes),
+              pdfDoc.embedPng(not_attempted3IconBytes),
+              pdfDoc.embedPng(question1IconBytes),
+              pdfDoc.embedPng(question2IconBytes),
+              pdfDoc.embedPng(question3IconBytes),
+              pdfDoc.embedPng(slantline1IconBytes),
+              pdfDoc.embedPng(slantline2IconBytes),
+              pdfDoc.embedPng(slantline3IconBytes),
+            ]);
+
+            const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            const fontBold = await pdfDoc.embedFont(
+              StandardFonts.HelveticaBold,
+            );
+
+            const font2 = await pdfDocWithoutIcon.embedFont(
+              StandardFonts.Helvetica,
+            );
+            const fontBold2 = await pdfDocWithoutIcon.embedFont(
+              StandardFonts.HelveticaBold,
+            );
+
+            let summaryData = [];
+            let users = [];
+            let totalMarks = 0;
+
+            // for (const value of booklet.documents) {
+            //   const task = await Task.findById(value.taskId);
+            //   const userId = task.userId;
+            //   console.log(userId);
+            //   let annotationPath;
+
+            //   if (task.evaluatorId) {
+            //     annotationPath = path.join(
+            //       "Annotations",
+            //       String(task.evaluatorId),
+            //       String(value._id),
+            //       String(userId),
+            //     );
+            //   } else {
+            //     annotationPath = path.join(
+            //       "Annotations",
+            //       String(userId),
+            //       String(value._id),
+            //     );
+            //   }
+
+            let allAnnotations = [];
+
+            for (let i = 0; i < imageFiles.length; i++) {
+              const imageName = imageFiles[i];
+              const pageNumber = Number(imageName.match(/\d+/)[0]);
+
+              const imagePath = path.join(imageFolder, imageName);
+              const imgBytes = await fs.promises.readFile(imagePath);
+              const png = await pdfDoc.embedPng(imgBytes);
+              const png2 = await pdfDocWithoutIcon.embedPng(imgBytes);
+              console.log(png.width, png.height);
+              const page = pdfDoc.addPage([png.width, png.height]);
+              const page2 = pdfDocWithoutIcon.addPage([
+                png2.width,
+                png2.height,
+              ]);
+
+              page.drawImage(png, {
+                x: 0,
+                y: 0,
+                width: png.width,
+                height: png.height,
+              });
+              page2.drawImage(png2, {
+                x: 0,
+                y: 0,
+                width: png2.width,
+                height: png2.height,
+              });
+
+              const pageAnnotationData = await Promise.all(
+                documentMeta.map(async (meta) => {
+                  const { value, task, questionDef, userRole } = meta;
+                  const userId = task.userId;
+
+                  let annotationPath;
+
+                  if (userRole?.role === "headevaluator") {
+                    annotationPath = path.join(
+                      "Annotations",
+                      String(task.evaluatorId),
+                      String(value._id),
+                      String(userId),
+                    );
+                  } else {
+                    annotationPath = path.join(
+                      "Annotations",
+                      String(userId),
+                      String(value._id),
+                    );
+                  }
+
+                  const jsonPath = path.join(
+                    annotationPath,
+                    `page_${pageNumber}.json`,
+                  );
+
+                  try {
+                    const jsonContent = await fs.promises.readFile(
+                      jsonPath,
+                      "utf8",
+                    );
+                    const json = JSON.parse(jsonContent);
+
+                    return {
+                      meta,
+                      annotations: json.annotations || [],
+                    };
+                  } catch {
+                    // File does not exist or JSON is invalid
+                    return null;
+                  }
+                }),
+              );
+              // 🔥 LOOP DOCUMENTS INSIDE PAGE
+              for (const item of pageAnnotationData) {
+                if (!item) continue;
+                const { meta, annotations } = item;
+                const { questionDef } = meta;
+
+                // console.log(value)
+                // const task = await Task.findById(value.taskId);
+                // const userId = task.userId;
+
+                // const userRole = await User.findById(userId);
+                // const questionDef = await QuestionDefinition.findById(
+                //   value.questionDefinitionId,
+                // );
+                // console.log(questionDef)
+                // const { value, task, questionDef, userRole } = meta;
+                // const userId = task.userId;
+
+                // let annotationPath;
+
+                // if (userRole?.role === "headevaluator") {
+                //   annotationPath = path.join(
+                //     "Annotations",
+                //     String(task.evaluatorId),
+                //     String(value._id),
+                //     String(userId),
+                //   );
+                // } else {
+                //   annotationPath = path.join(
+                //     "Annotations",
+                //     String(userId),
+                //     String(value._id),
+                //   );
+                // }
+
+                // const jsonPath = path.join(
+                //   annotationPath,
+                //   `page_${pageNumber}.json`,
+                // );
+
+                // if (!fs.existsSync(jsonPath)) continue;
+
+                // const json = JSON.parse(fs.readFileSync(jsonPath));
+                // const annotations = json.annotations || [];
+                // // console.log( 'annotations',annotations)
+
+                let displacement;
+
+                if (
+                  questionDef.page.includes(pageNumber) &&
+                  questionDef.coordinates.partialAreas &&
+                  questionDef.coordinates.partialAreas.hasOwnProperty(
+                    pageNumber,
+                  )
+                ) {
+                  console.log("trueeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+                  displacement =
+                    questionDef.coordinates.partialAreas[pageNumber][0];
+                } else {
+                  console.log("falseeeeeeeeeeeeeeeeeeeeeeeeeee");
+                  displacement = { x: 0, y: 0 };
+                }
+                for (const a of annotations) {
+                  let icon;
+                  // console.log("annotations", a);
+
+                  switch (true) {
+                    case a.iconUrl && a.iconUrl.includes("Red"):
+                      icon = checkIcon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("Black"):
+                      icon = blackCheckIcon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("blank1"):
+                      icon = blank1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("blank2"):
+                      icon = blank2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("blank3"):
+                      icon = blank3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("check1"):
+                      icon = check1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("check2"):
+                      icon = check2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("check3"):
+                      icon = check3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("circle1"):
+                      icon = circle1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("circle2"):
+                      icon = circle2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("circle3"):
+                      icon = circle3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("cross1"):
+                      icon = cross1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("cross2"):
+                      icon = cross2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("cross3"):
+                      icon = cross3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("line1"):
+                      icon = line1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("line2"):
+                      icon = line2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("line3"):
+                      icon = line3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("not_attempt1"):
+                      icon = notattempted1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("not_attempt2"):
+                      icon = notattempted2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("not_attempt3"):
+                      icon = notattempted3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("question1"):
+                      icon = question1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("question2"):
+                      icon = question2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("question3"):
+                      icon = question3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("slantline1"):
+                      icon = slantline1Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("slantline2"):
+                      icon = slantline2Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("slantline3"):
+                      icon = slantline3Icon;
+                      break;
+                    case a.iconUrl && a.iconUrl.includes("close"):
+                      icon = closeIcon;
+                      break;
+
+                    default:
+                      icon = "noicon";
+                  }
+
+                  const pageHeight = page.getHeight();
+                  const pageHeight2 = page2.getHeight();
+
+                  if (icon !== "noicon") {
+                    page.drawImage(icon, {
+                      x: Number(a.x) + displacement.x,
+                      y: pageHeight - (Number(a.y) + displacement.y) - a.height,
+                      width: a.width,
+                      height: a.height,
+                    });
+                  }
+
+                  if (icon == "noicon") {
+                    page.drawText(`Q${a.question}`, {
+                      x: Number(a.x) + displacement.x + 5,
+                      y: pageHeight - (Number(a.y) + displacement.y) - 85,
+                      size: 12,
+                      font,
+                    });
+                    page2.drawText(`Q${a.question}`, {
+                      x: Number(a.x) + displacement.x + 5,
+                      y: pageHeight2 - (Number(a.y) + displacement.y) - 85,
+                      size: 12,
+                      font2,
+                    });
+
+                    page.drawCircle({
+                      x: Number(a.x) + displacement.x + 55,
+                      y: pageHeight - (Number(a.y) + displacement.y) - 79,
+                      size: 10,
+                      borderColor: rgb(0, 0.6, 0),
+                      borderWidth: 2,
+                    });
+                    page2.drawCircle({
+                      x: Number(a.x) + displacement.x + 55,
+                      y: pageHeight2 - (Number(a.y) + displacement.y) - 79,
+                      size: 10,
+                      borderColor: rgb(0, 0.6, 0),
+                      borderWidth: 2,
+                    });
+
+                    page.drawText(String(a.mark), {
+                      x: Number(a.x) + displacement.x + 55,
+                      y: pageHeight - (Number(a.y) + displacement.y) - 85,
+                      size: 12,
+                      font,
+                    });
+                    page2.drawText(String(a.mark), {
+                      x: Number(a.x) + displacement.x + 55,
+                      y: pageHeight2 - (Number(a.y) + displacement.y) - 85,
+                      size: 12,
+                      font2,
+                    });
+                  }
+
+                  summaryData.push({
+                    question: `Q${a.question}`,
+                    marks: a.mark,
+                    page: pageNumber,
+                    time: a.timeStamps || "",
+                    user: a.email,
+                  });
+
+                  if (!users.includes(a.email)) {
+                    users.push(a.email);
+                  }
+
+                  // totalMarks += Number(a.mark);
+                }
+                allAnnotations.push(...annotations);
               }
-
-              // totalMarks += Number(a.mark);
             }
-            allAnnotations.push(...annotations)
-          }
-        }
-        console.log('allAnnotations-------------',allAnnotations)
-        let questionCount = []
+            console.log("allAnnotations-------------", allAnnotations);
+            let questionCount = [];
 
-        for (const e of allAnnotations) {
-          if(e.role=="headevaluator"){
-            totalMarks+=Number(e.mark)
-            questionCount.push(e.question)
-          }
-        }
+            for (const e of allAnnotations) {
+              if (e.role == "headevaluator") {
+                totalMarks += Number(e.mark);
+                questionCount.push(e.question);
+              }
+            }
 
-        for (const e of allAnnotations) {
-          if(!questionCount.includes(e.question)){
-            totalMarks+=Number(e.mark)
-          }
-          
-        }
-        const summaryPage = pdfDoc.insertPage(0, [1080,1920]);
-        const summaryPage2 = pdfDocWithoutIcon.insertPage(0, [1080,1920]);
+            for (const e of allAnnotations) {
+              if (!questionCount.includes(e.question)) {
+                totalMarks += Number(e.mark);
+              }
+            }
+            const summaryPage = pdfDoc.insertPage(0, [1080, 1920]);
+            const summaryPage2 = pdfDocWithoutIcon.insertPage(0, [1080, 1920]);
 
-        const { width, height } = summaryPage.getSize();
+            const { width, height } = summaryPage.getSize();
 
-        summaryPage.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
-          x: 50,
-          y: height - 40,
-          size: 18,
-          font: fontBold,
-        });
-        summaryPage2.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
-          x: 50,
-          y: height - 40,
-          size: 18,
-          font: fontBold2,
-        });
+            summaryPage.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
+              x: 50,
+              y: height - 40,
+              size: 18,
+              font: fontBold,
+            });
+            summaryPage2.drawText(`Booklet Name: ${booklet.answerPdfName}`, {
+              x: 50,
+              y: height - 40,
+              size: 18,
+              font: fontBold2,
+            });
 
-        let y = height - 80;
+            let y = height - 80;
 
-        summaryPage.drawText("Question", { x: 50, y, size: 13 ,font: fontBold });
-        summaryPage2.drawText("Question", { x: 50, y, size: 13 ,font: fontBold2 });
-        let coord = 150
-        let coordEmailPair = new Map()
+            summaryPage.drawText("Question", {
+              x: 50,
+              y,
+              size: 13,
+              font: fontBold,
+            });
+            summaryPage2.drawText("Question", {
+              x: 50,
+              y,
+              size: 13,
+              font: fontBold2,
+            });
+            let coord = 150;
+            let coordEmailPair = new Map();
 
-        for (const e of users) {
-          summaryPage.drawText(e, { x: coord, y, size: 11, font: fontBold });
-          summaryPage2.drawText(e, { x: coord, y, size: 11, font: fontBold2 });
-          coordEmailPair.set(e,coord)
-          coord+=100
+            for (const e of users) {
+              summaryPage.drawText(e, {
+                x: coord,
+                y,
+                size: 11,
+                font: fontBold,
+              });
+              summaryPage2.drawText(e, {
+                x: coord,
+                y,
+                size: 11,
+                font: fontBold2,
+              });
+              coordEmailPair.set(e, coord);
+              coord += 100;
+            }
+            // summaryPage.drawText("Marks", { x: 150, y, size: 13, font: fontBold });
+            summaryPage.drawText("Page", {
+              x: coord,
+              y,
+              size: 13,
+              font: fontBold,
+            });
+            summaryPage2.drawText("Page", {
+              x: coord,
+              y,
+              size: 13,
+              font: fontBold2,
+            });
+            coordEmailPair.set("page", coord);
+            summaryPage.drawText("Time", {
+              x: (coord += 120),
+              y,
+              size: 13,
+              font: fontBold,
+            });
+            summaryPage2.drawText("Time", {
+              x: coord,
+              y,
+              size: 13,
+              font: fontBold2,
+            });
+            coordEmailPair.set("time", coord);
+            // summaryPage.drawText("User", { x: coord+=120, y, size: 13, font: fontBold });
 
-        }
-        // summaryPage.drawText("Marks", { x: 150, y, size: 13, font: fontBold });
-        summaryPage.drawText("Page", { x: coord, y, size: 13, font: fontBold });
-        summaryPage2.drawText("Page", { x: coord, y, size: 13 ,font: fontBold2 });
-        coordEmailPair.set('page',coord)
-        summaryPage.drawText("Time", { x: coord+=120, y, size: 13, font: fontBold });
-        summaryPage2.drawText("Time", { x: coord, y , size: 13, font: fontBold2 });
-        coordEmailPair.set('time',coord)
-        // summaryPage.drawText("User", { x: coord+=120, y, size: 13, font: fontBold });
-        
-        // console.log(coordEmailPair)
-        
-        
-        
-        
+            // console.log(coordEmailPair)
 
-        y -= 20;
+            y -= 20;
 
-        for (const row of summaryData) {
-          summaryPage.drawText(row.question, { x: 50, y, size: 11, font });
-          summaryPage.drawText(String(row.marks), {
-            x: coordEmailPair.get(row.user),
-            y,
-            size: 11,
-            font,
-          });
-          summaryPage.drawText(String(row.page), { x: coordEmailPair.get('page'), y, size: 11, font });
-          summaryPage.drawText(row.time, { x: coordEmailPair.get('time'), y, size: 11, font });
-          // summaryPage.drawText(row.user, { x: 480, y, size: 11, font });
+            for (const row of summaryData) {
+              summaryPage.drawText(row.question, { x: 50, y, size: 11, font });
+              summaryPage.drawText(String(row.marks), {
+                x: coordEmailPair.get(row.user),
+                y,
+                size: 11,
+                font,
+              });
+              summaryPage.drawText(String(row.page), {
+                x: coordEmailPair.get("page"),
+                y,
+                size: 11,
+                font,
+              });
+              summaryPage.drawText(row.time, {
+                x: coordEmailPair.get("time"),
+                y,
+                size: 11,
+                font,
+              });
+              // summaryPage.drawText(row.user, { x: 480, y, size: 11, font });
 
-          summaryPage2.drawText(row.question, { x: 50, y, size: 11, font2 });
-          summaryPage2.drawText(String(row.marks), {
-            x: coordEmailPair.get(row.user),
-            y,
-            size: 11,
-            font2,
-          });
-          summaryPage2.drawText(String(row.page), {
-            x: coordEmailPair.get('page'),
-            y,
-            size: 11,
-            font2,
-          });
-          summaryPage2.drawText(row.time, { x: coordEmailPair.get('time'), y, size: 11, font2 });
+              summaryPage2.drawText(row.question, {
+                x: 50,
+                y,
+                size: 11,
+                font2,
+              });
+              summaryPage2.drawText(String(row.marks), {
+                x: coordEmailPair.get(row.user),
+                y,
+                size: 11,
+                font2,
+              });
+              summaryPage2.drawText(String(row.page), {
+                x: coordEmailPair.get("page"),
+                y,
+                size: 11,
+                font2,
+              });
+              summaryPage2.drawText(row.time, {
+                x: coordEmailPair.get("time"),
+                y,
+                size: 11,
+                font2,
+              });
 
-          y -= 20;
-        }
+              y -= 20;
+            }
 
-        summaryPage.drawText(`Total Marks: ${totalMarks}`, {
-          x: width - 200,
-          y: y - 10,
-          size: 14,
-          font: fontBold,
-        });
-        summaryPage2.drawText(`Total Marks: ${totalMarks}`, {
-          x: width - 200,
-          y: y - 10,
-          size: 14,
-          font: fontBold2,
-        });
+            summaryPage.drawText(`Total Marks: ${totalMarks}`, {
+              x: width - 200,
+              y: y - 10,
+              size: 14,
+              font: fontBold,
+            });
+            summaryPage2.drawText(`Total Marks: ${totalMarks}`, {
+              x: width - 200,
+              y: y - 10,
+              size: 14,
+              font: fontBold2,
+            });
 
-        const finalBytes = await pdfDoc.save();
-        const finalBytes2 = await pdfDocWithoutIcon.save();
+            const [finalBytes, finalBytes2] = await Promise.all([
+              pdfDoc.save(),
+              pdfDocWithoutIcon.save(),
+            ]);
 
-        archive.append(Buffer.from(finalBytes), {
-          name: booklet.answerPdfName,
-        });
-        archive.append(Buffer.from(finalBytes2), {
-          name: `${booklet.answerPdfName}_Without_Icon.pdf`,
-        });
-      }))
+            archive.append(Buffer.from(finalBytes), {
+              name: booklet.answerPdfName,
+            });
+            archive.append(Buffer.from(finalBytes2), {
+              name: `${booklet.answerPdfName}_Without_Icon.pdf`,
+            });
+          }),
+        ),
+      );
 
       // for (const booklet of booklets) {
       //   const imageFolder = path.join(
