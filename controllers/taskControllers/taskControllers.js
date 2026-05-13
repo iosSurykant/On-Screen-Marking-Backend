@@ -738,7 +738,6 @@ const assigningTaskWorkers = async (jobs) => {
 
             const lockFile = path.join(bookletFolder, ".extract.lock");
             if (imageAlreadyExist.length == 0) {
-
               if (fs.existsSync(lockFile)) {
                 console.log(`Locked ${pdfDoc.answerPdfName}`);
                 return;
@@ -1194,62 +1193,66 @@ const assignBookletWiseTask = async (req, res) => {
     /* ===================================================== */
     /* 🚀 BACKGROUND IMAGE EXTRACTION STARTS HERE          */
     /* ===================================================== */
-
+    const limit = pLimit(10);
     setImmediate(async () => {
       console.log("🚀 Background extraction started...");
 
-      for (const pdfDoc of insertedBookletDocs) {
-        try {
-          const pdfPath = path.join(subjectFolder, pdfDoc.answerPdfName);
+      await Promise.all(
+        insertedBookletDocs.map(async (pdfDoc) =>
+          limit(async () => {
+            try {
+              const pdfPath = path.join(subjectFolder, pdfDoc.answerPdfName);
 
-          if (!fs.existsSync(pdfPath)) {
-            console.warn(`PDF not found: ${pdfDoc.answerPdfName}`);
-            continue;
-          }
+              if (!fs.existsSync(pdfPath)) {
+                console.warn(`PDF not found: ${pdfDoc.answerPdfName}`);
+                return;
+              }
 
-          const extractedFolder = path.join(
-            subjectFolder,
-            "bookletWiseExtracted",
-            pdfDoc.answerPdfName.replace(".pdf", ""),
-          );
+              const extractedFolder = path.join(
+                subjectFolder,
+                "bookletWiseExtracted",
+                pdfDoc.answerPdfName.replace(".pdf", ""),
+              );
 
-          fs.mkdirSync(extractedFolder, { recursive: true });
+              fs.mkdirSync(extractedFolder, { recursive: true });
 
-          console.log(`📤 Extracting images from ${pdfDoc.answerPdfName}`);
+              console.log(`📤 Extracting images from ${pdfDoc.answerPdfName}`);
 
-          const imageFiles = await extractImagesFromPdf(
-            pdfPath,
-            extractedFolder,
-          );
+              const imageFiles = await extractImagesFromPdf(
+                pdfPath,
+                extractedFolder,
+              );
 
-          if (!imageFiles || !imageFiles.length) {
-            console.warn("No images extracted");
-            continue;
-          }
+              if (!imageFiles || !imageFiles.length) {
+                console.warn("No images extracted");
+                return;
+              }
 
-          const imageDocs = imageFiles.map((img) => {
-            const match = img.match(/image_(\d+)\.png$/);
+              const imageDocs = imageFiles.map((img) => {
+                const match = img.match(/image_(\d+)\.png$/);
 
-            return {
-              bookletAnswerPdfId: pdfDoc._id,
-              name: img,
-              page: match ? parseInt(match[1], 10) : 1,
-              status: "notVisited",
-            };
-          });
+                return {
+                  bookletAnswerPdfId: pdfDoc._id,
+                  name: img,
+                  page: match ? parseInt(match[1], 10) : 1,
+                  status: "notVisited",
+                };
+              });
 
-          await BookletAnswerPdfImage.insertMany(imageDocs);
+              await BookletAnswerPdfImage.insertMany(imageDocs);
 
-          console.log(
-            `✅ Stored ${imageDocs.length} images for ${pdfDoc.answerPdfName}`,
-          );
-        } catch (err) {
-          console.error(
-            `❌ Background extraction failed for ${pdfDoc.answerPdfName}`,
-            err,
-          );
-        }
-      }
+              console.log(
+                `✅ Stored ${imageDocs.length} images for ${pdfDoc.answerPdfName}`,
+              );
+            } catch (err) {
+              console.error(
+                `❌ Background extraction failed for ${pdfDoc.answerPdfName}`,
+                err,
+              );
+            }
+          }),
+        ),
+      );
 
       console.log("🎉 Background extraction completed.");
     });
@@ -1729,6 +1732,37 @@ const completeBookletWise = async (req, res) => {
     }
 
     await task.save();
+
+    const evaluator = await User.findById(userId).select("deputyHead");
+    console.log("evaluator", evaluator);
+    const deputyHeadId = evaluator?.deputyHead;
+
+    if (!deputyHeadId) {
+      console.log("⚠ No deputy head assigned");
+    } else {
+      const session = await mongoose.startSession();
+
+      try {
+        await session.startTransaction();
+
+        await reassignBookletsCore({
+          fromTaskId: task._id,
+          toUserId: deputyHeadId,
+          transferCount: task.totalBooklets,
+          reassignedBy: userId,
+          taskType: "booklet",
+          evaluatorId: userId,
+          forceNewTask: true,
+          session,
+        });
+
+        await session.commitTransaction();
+      } catch (error) {
+        await session.abortTransaction();
+        await session.endSession();
+        console.error("Deputy head reassignment failed:", error);
+      }
+    }
 
     return res.status(200).json({
       success: true,

@@ -407,7 +407,7 @@ async function generateQuestionWiseResult({
 
     if (isComplete) validBarcodes.push(barcode);
   }
-
+  console.log("Valid Barcodes:", validBarcodes);
   /* ------------------------------------------------------------ */
   /* 9️⃣ GENERATE RESULTS                                         */
   /* ------------------------------------------------------------ */
@@ -1474,9 +1474,11 @@ const downloadCompletedBooklets = async (req, res) => {
       });
 
       const result = Object.values(grouped);
+      console.log("Grouped Booklets:", result);
 
-      for (const booklet of result) {
-        // console.log(booklet);
+    await Promise.all ( 
+      result.map(async (booklet) => {
+        console.log('booklet',booklet);
         const imageFolder = path.join(
           "processedFolder",
           subjectCode,
@@ -1486,7 +1488,7 @@ const downloadCompletedBooklets = async (req, res) => {
 
         if (!fs.existsSync(imageFolder)) {
           console.log("Image folder not found:", imageFolder);
-          continue;
+          return;
         }
 
         const imageFiles = fs
@@ -1928,7 +1930,7 @@ const downloadCompletedBooklets = async (req, res) => {
         archive.append(Buffer.from(finalBytes2), {
           name: `${booklet.answerPdfName}_Without_Icon.pdf`,
         });
-      }
+      }))
 
       // for (const booklet of booklets) {
       //   const imageFolder = path.join(
