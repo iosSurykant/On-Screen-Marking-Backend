@@ -439,21 +439,37 @@ async function generateQuestionWiseResult({
 
       /* -------- ✅ FIXED EVALUATOR LOGIC -------- */
 
-      let evaluatorEmail = null;
+      // let evaluatorEmail = null;
 
-      // 🔥 Priority: evaluatorId (actual evaluator)
+      // // 🔥 Priority: evaluatorId (actual evaluator)
+      // if (task.evaluatorId) {
+      //   evaluatorEmail = userMap[task.evaluatorId.toString()];
+      // }
+
+      // // fallback: userId
+      // else if (task.userId) {
+      //   evaluatorEmail = userMap[task.userId.toString()];
+      // }
+
+      // if (evaluatorEmail) {
+      //   evaluatedBySet.add(evaluatorEmail);
+      // }
+
+      let emailsSet = new Set();
+
       if (task.evaluatorId) {
-        evaluatorEmail = userMap[task.evaluatorId.toString()];
+        const evaluatorEmail = userMap[task.evaluatorId.toString()];
+        if (evaluatorEmail) emailsSet.add(evaluatorEmail);
       }
 
-      // fallback: userId
-      else if (task.userId) {
-        evaluatorEmail = userMap[task.userId.toString()];
+      if (task.userId) {
+        const headEmail = userMap[task.userId.toString()];
+        if (headEmail && !emailsSet.has(headEmail)) {
+          emailsSet.add(headEmail);
+        }
       }
 
-      if (evaluatorEmail) {
-        evaluatedBySet.add(evaluatorEmail);
-      }
+      emailsSet.forEach((email) => evaluatedBySet.add(email));
     }
 
     return {
