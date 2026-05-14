@@ -31,7 +31,6 @@ export function getFilePath(
   page,
   taskType = "question",
   evaluatorId = null,
-
 ) {
   console.log("🧩 getFilePath called with:", {
     userId,
@@ -39,7 +38,6 @@ export function getFilePath(
     page,
     baseDataDir,
     evaluatorId,
-    
   });
 
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
@@ -47,13 +45,24 @@ export function getFilePath(
   let pdfDir;
 
   if (evaluatorId) {
-    // 🔥 HEAD EVALUATOR CASE
-    pdfDir = path.join(
-      String(rootDir),
-      String(evaluatorId), // ROOT (original evaluator)
-      String(answerPdfId),
-      String(userId), // CHILD (head evaluator)
-    );
+    // HEAD EVALUATOR CASE
+
+    if (taskType === "booklet") {
+      // booklet -> don't use userId
+      pdfDir = path.join(
+        String(rootDir),
+        String(evaluatorId),
+        String(answerPdfId),
+      );
+    } else if (taskType === "question") {
+      // question -> use userId
+      pdfDir = path.join(
+        String(rootDir),
+        String(evaluatorId), // ROOT (original evaluator)
+        String(answerPdfId),
+        String(userId), // CHILD (head evaluator)
+      );
+    }
   } else {
     // ✅ NORMAL EVALUATOR
     pdfDir = path.join(String(rootDir), String(userId), String(answerPdfId));
@@ -76,18 +85,23 @@ export function getMarksDataFilePath(
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
 
   const pdfDir = evaluatorId
-    ? path.join(
-        String(rootDir),
-        String(evaluatorId),
-        String(answerPdfId),
-        String(userId),
-      )
+    ? taskType === "booklet"
+      ? path.join(String(rootDir), String(evaluatorId), String(answerPdfId))
+      : path.join(
+          String(rootDir),
+          String(evaluatorId),
+          String(answerPdfId),
+          String(userId),
+        )
     : path.join(String(rootDir), String(userId), String(answerPdfId));
 
   // Ensure directory exists
   if (!fs.existsSync(pdfDir)) {
     fs.mkdirSync(pdfDir, { recursive: true });
   }
+
+  console.log("MARKS FILE TASK TYPE =", taskType);
+  console.log("MARKS ROOT DIR =", rootDir);
 
   return path.join(pdfDir, `marksData.json`);
 }
@@ -102,12 +116,14 @@ export function getMarksFilePath(
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
 
   const pdfDir = evaluatorId
-    ? path.join(
-        String(rootDir),
-        String(evaluatorId),
-        String(answerPdfId),
-        String(userId),
-      )
+    ? taskType === "booklet"
+      ? path.join(String(rootDir), String(evaluatorId), String(answerPdfId))
+      : path.join(
+          String(rootDir),
+          String(evaluatorId),
+          String(answerPdfId),
+          String(userId),
+        )
     : path.join(String(rootDir), String(userId), String(answerPdfId));
 
   // Ensure directory exists
@@ -138,6 +154,8 @@ export default function handleAnnotationSocket(io) {
 
       socket.taskType = isBooklet ? "booklet" : "question";
 
+      console.log("JOIN ROOM TASK TYPE =", socket.taskType);
+
       socket.join(roomName);
 
       console.log(`🟢 Client ${socket.id} joined room: ${roomName}`);
@@ -146,7 +164,10 @@ export default function handleAnnotationSocket(io) {
     });
 
     const getEvaluatorContext = async (taskId, userId) => {
-      const task = await Task.findById(taskId);
+      let task = await Task.findById(taskId);
+      if (!task) {
+        task = await BookletTask.findById(taskId);
+      }
       if (!task) return { evaluatorId: null, isHead: false };
 
       const user = await mongoose.model("User").findById(userId).select("role");
@@ -154,9 +175,13 @@ export default function handleAnnotationSocket(io) {
 
       const role = user?.role?.toLowerCase();
       const isHead = role === "headevaluator";
+      const isDeputyHead = role === "deputyhead";
 
       return {
-        evaluatorId: isHead ? task.evaluatorId : null, // 🔥 ONLY FOR HEAD
+        evaluatorId:
+          isHead || isDeputyHead || role === "reviewer"
+            ? task.evaluatorId
+            : null,
         isHead,
       };
     };
@@ -197,7 +222,7 @@ export default function handleAnnotationSocket(io) {
 
     // const clearHeadFolder = (userId, answerPdfId, evaluatorId, taskType) => {
     //   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
-     
+
     //   const headFolderPath = path.join(
     //     String(rootDir),
     //     String(evaluatorId),
@@ -264,7 +289,7 @@ export default function handleAnnotationSocket(io) {
         socket.taskType,
         evaluatorId,
       );
-      console.log('LOGGING THE PATH ', filePath)
+      console.log("LOGGING THE PATH ", filePath);
       // console.log('LOGGING THE FILEDATA ', JSON.parse(fs.readFileSync(filePath, "utf-8")))
       if (fs.existsSync(filePath)) {
         try {
@@ -276,7 +301,6 @@ export default function handleAnnotationSocket(io) {
       }
       return { annotations: [], comments: [] };
     };
-    
 
     const loadMarksData = (userId, answerPdfId, evaluatorId) => {
       const filePath = getMarksDataFilePath(
@@ -341,7 +365,7 @@ export default function handleAnnotationSocket(io) {
       isHead = false,
     ) => {
       try {
-        console.log("DATA FOR MARKSDATA.JSON ",data)
+        console.log("DATA FOR MARKSDATA.JSON ", data);
         validateHeadAccess(userId, evaluatorId);
         const filePath = getMarksDataFilePath(
           userId,
@@ -428,6 +452,8 @@ export default function handleAnnotationSocket(io) {
     socket.on("add-annotation", async (data) => {
       try {
         console.log("data", data);
+        console.log("ADD ANNOTATION TASK TYPE =", data.taskType);
+        console.log("SOCKET TASK TYPE =", socket.taskType);
 
         const { taskId, answerPdfId, userId, page } = data;
 
@@ -823,6 +849,8 @@ export default function handleAnnotationSocket(io) {
           evaluatorId,
         );
         console.log("filePath", filePath);
+        console.log("GET FILE PATH TASK TYPE =", taskType);
+        console.log("ROOT DIR =", rootDir);
 
         const json = JSON.parse(fs.readFileSync(filePath, "utf8"));
 
@@ -1023,7 +1051,7 @@ export default function handleAnnotationSocket(io) {
         //     });
         //   }
 
-          // console.log("✅ Head marks saved in DB");
+        // console.log("✅ Head marks saved in DB");
 
         //   //  2. UPDATE marksData.json ALSO
 
@@ -1063,7 +1091,7 @@ export default function handleAnnotationSocket(io) {
         //     true,
         //   );
 
-          // console.log("Head marksData.json updated");
+        // console.log("Head marksData.json updated");
 
         //   // 🔁 EMIT UPDATED DATA
         //   const headMarks = await HeadMarks.find({
@@ -1428,7 +1456,6 @@ export default function handleAnnotationSocket(io) {
           global.clearedHeadFolders = {};
         }
 
-
         if (isHead && !global.clearedHeadFolders[folderKey]) {
           resetHeadMarksToZero(userId, answerPdfId, evaluatorId);
 
@@ -1436,7 +1463,6 @@ export default function handleAnnotationSocket(io) {
 
           console.log("🔥 Head marks reset to 0 (ONLY ONCE)");
         }
-       
 
         // if (isHead && !global.clearedHeadFolders[folderKey]) {
         //   clearHeadFolder(userId, answerPdfId, evaluatorId, socket.taskType);
@@ -1867,7 +1893,7 @@ export default function handleAnnotationSocket(io) {
 
     socket.on("fetch-reviewerData", async (data) => {
       try {
-        const {userId, evaluatorId, answerPdfId, page } = data;
+        const { userId, evaluatorId, answerPdfId, page } = data;
 
         // ✅ DIRECTLY READ evaluator data
         const marksFile = loadMarks(userId, evaluatorId, answerPdfId);

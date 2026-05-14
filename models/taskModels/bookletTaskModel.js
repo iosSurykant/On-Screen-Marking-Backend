@@ -11,6 +11,11 @@ const bookletTaskSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    evaluatorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     totalBooklets: {
       type: Number,
       required: true,

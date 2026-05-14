@@ -8,7 +8,7 @@ import bcrypt from "bcryptjs";
 async function createInitialUser() {
   try {
     const existingUser = await User.findOne({
-      email: "abhishekomr077@gmail.com",
+      email: "mosadmin@gmail.com",
     });
     if (!existingUser) {
       const salt = await bcrypt.genSalt(10);
