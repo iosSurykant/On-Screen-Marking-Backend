@@ -1733,36 +1733,36 @@ const completeBookletWise = async (req, res) => {
 
     await task.save();
 
-    const evaluator = await User.findById(userId).select("deputyHead");
-    console.log("evaluator", evaluator);
-    const deputyHeadId = evaluator?.deputyHead;
+    // const evaluator = await User.findById(userId).select("deputyHead");
+    // console.log("evaluator", evaluator);
+    // const deputyHeadId = evaluator?.deputyHead;
 
-    if (!deputyHeadId) {
-      console.log("⚠ No deputy head assigned");
-    } else {
-      const session = await mongoose.startSession();
+    // if (!deputyHeadId) {
+    //   console.log("⚠ No deputy head assigned");
+    // } else {
+    //   const session = await mongoose.startSession();
 
-      try {
-        await session.startTransaction();
+    //   try {
+    //     await session.startTransaction();
 
-        await reassignBookletsCore({
-          fromTaskId: task._id,
-          toUserId: deputyHeadId,
-          transferCount: task.totalBooklets,
-          reassignedBy: userId,
-          taskType: "booklet",
-          evaluatorId: userId,
-          forceNewTask: true,
-          session,
-        });
+    //     await reassignBookletsCore({
+    //       fromTaskId: task._id,
+    //       toUserId: deputyHeadId,
+    //       transferCount: task.totalBooklets,
+    //       reassignedBy: userId,
+    //       taskType: "booklet",
+    //       evaluatorId: userId,
+    //       forceNewTask: true,
+    //       session,
+    //     });
 
-        await session.commitTransaction();
-      } catch (error) {
-        await session.abortTransaction();
-        await session.endSession();
-        console.error("Deputy head reassignment failed:", error);
-      }
-    }
+    //     await session.commitTransaction();
+    //   } catch (error) {
+    //     await session.abortTransaction();
+    //     await session.endSession();
+    //     console.error("Deputy head reassignment failed:", error);
+    //   }
+    // }
 
     return res.status(200).json({
       success: true,
