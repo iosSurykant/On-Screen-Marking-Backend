@@ -1733,36 +1733,36 @@ const completeBookletWise = async (req, res) => {
 
     await task.save();
 
-    const evaluator = await User.findById(userId).select("deputyHead");
-    console.log("evaluator", evaluator);
-    const deputyHeadId = evaluator?.deputyHead;
+    // const evaluator = await User.findById(userId).select("deputyHead");
+    // console.log("evaluator", evaluator);
+    // const deputyHeadId = evaluator?.deputyHead;
 
-    if (!deputyHeadId) {
-      console.log("⚠ No deputy head assigned");
-    } else {
-      const session = await mongoose.startSession();
+    // if (!deputyHeadId) {
+    //   console.log("⚠ No deputy head assigned");
+    // } else {
+    //   const session = await mongoose.startSession();
 
-      try {
-        await session.startTransaction();
+    //   try {
+    //     await session.startTransaction();
 
-        await reassignBookletsCore({
-          fromTaskId: task._id,
-          toUserId: deputyHeadId,
-          transferCount: task.totalBooklets,
-          reassignedBy: userId,
-          taskType: "booklet",
-          evaluatorId: userId,
-          forceNewTask: true,
-          session,
-        });
+    //     await reassignBookletsCore({
+    //       fromTaskId: task._id,
+    //       toUserId: deputyHeadId,
+    //       transferCount: task.totalBooklets,
+    //       reassignedBy: userId,
+    //       taskType: "booklet",
+    //       evaluatorId: userId,
+    //       forceNewTask: true,
+    //       session,
+    //     });
 
-        await session.commitTransaction();
-      } catch (error) {
-        await session.abortTransaction();
-        await session.endSession();
-        console.error("Deputy head reassignment failed:", error);
-      }
-    }
+    //     await session.commitTransaction();
+    //   } catch (error) {
+    //     await session.abortTransaction();
+    //     await session.endSession();
+    //     console.error("Deputy head reassignment failed:", error);
+    //   }
+    // }
 
     return res.status(200).json({
       success: true,
@@ -4850,12 +4850,12 @@ const getAllTasksBasedOnSubjectCode = async (req, res) => {
       return res.status(400).json({ message: "Subject code is required." });
     }
 
-    const tasks = await Task.find({ subjectCode: subjectcode }).populate(
-      "userId",
-      "name email",
-    );
+    const subject = await Subject.findOne({ code: subjectcode });
+    const schemaRelation = await SubjectSchemaRelation.findOne({ subjectId: subject._id });
+    // console.log("subject", schemaRelation);
+    const schema = await Schema.findById(schemaRelation.schemaId)
 
-    res.status(200).json(tasks);
+    res.status(200).json(schema.numberOfPage);
   } catch (error) {
     console.error("Error fetching tasks:", error);
     res
