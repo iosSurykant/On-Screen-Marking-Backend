@@ -2032,6 +2032,9 @@ const reassignPendingBooklets = async (req, res) => {
         toTask = new BookletTask({
           subjectCode: fromTask.subjectCode,
           userId: toUser._id,
+          evaluatorId: isReviewer
+            ? fromTask.userId
+            : null,
           totalBooklets: 0,
           status: "inactive",
           currentFileIndex: 1,
@@ -4784,12 +4787,12 @@ const getAllTasksBasedOnSubjectCode = async (req, res) => {
       return res.status(400).json({ message: "Subject code is required." });
     }
 
-    const tasks = await Task.find({ subjectCode: subjectcode }).populate(
-      "userId",
-      "name email",
-    );
+    const subject = await Subject.findOne({ code: subjectcode });
+    const schemaRelation = await SubjectSchemaRelation.findOne({ subjectId: subject._id });
+    // console.log("subject", schemaRelation);
+    const schema = await Schema.findById(schemaRelation.schemaId)
 
-    res.status(200).json(tasks);
+    res.status(200).json(schema.numberOfPage);
   } catch (error) {
     console.error("Error fetching tasks:", error);
     res
