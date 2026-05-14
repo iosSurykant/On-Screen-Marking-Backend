@@ -31,6 +31,7 @@ import {
     getDataprincipalSide,
     assignHeadEvaluatorTask,
     assignReviewerRollbackTask,
+    assignReviewerRollbackBookletTask,
     rejectIrregularBooklet,
     getIrregularRejectedBooklets
     // generatePdfForCompletedBooklet
@@ -70,6 +71,7 @@ router.post("/reviewer/rejectTask", reviewerRejectTask);
 router.get("/get/principalsideData", getDataprincipalSide);
 
 router.post("/assign/reviewer-rollback", assignReviewerRollbackTask);
+router.post("/assign/reviewer-booklet-rollback", assignReviewerRollbackBookletTask);
 
 router.post("/change/scannerTaskStatus", ChangeScannerTaskStatus);
 
