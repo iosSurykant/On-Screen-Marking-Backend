@@ -7,14 +7,17 @@ import {
     removeRejectedBooklets,
     deleteBookletsByRange,
     getAllBookletsName,
-    processingBookletsManually
+    processingBookletsManually,
+    mobileUpload
 } from "../../controllers/bookletsProcessing/bookletsProcessing.js";
 
 import authMiddleware from "../../Middlewares/authMiddleware.js";
 import uploadedMiddleware from "../../Middlewares/uploadedMiddleware.js";
 
 
+
 router.post('/uploadingbooklets', authMiddleware, uploadedMiddleware.any(), uploadingBooklets);
+router.post('/mobileupload', uploadedMiddleware.any(), mobileUpload);
 router.post('/processing', processingBookletsBySocket);
 router.get('/booklet', servingBooklets);
 router.delete('/rejected', removeRejectedBooklets);
