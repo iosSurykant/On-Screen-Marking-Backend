@@ -705,7 +705,7 @@ const assigningTaskWorkers = async (jobs) => {
 
       const questionPages = new Set(questionDef.page);
 
-      const limit = pLimit(5);
+      const limit = pLimit(22);
 
       await Promise.all(
         assignedPdfs.map((pdfDoc) =>
@@ -2032,9 +2032,7 @@ const reassignPendingBooklets = async (req, res) => {
         toTask = new BookletTask({
           subjectCode: fromTask.subjectCode,
           userId: toUser._id,
-          evaluatorId: isReviewer
-            ? fromTask.userId
-            : null,
+          evaluatorId: isReviewer ? fromTask.userId : null,
           totalBooklets: 0,
           status: "inactive",
           currentFileIndex: 1,
@@ -3419,9 +3417,7 @@ const getReviewerBookletTask = async (req, res) => {
       });
     }
 
-    const schemaDetails = await Schema.findById(
-      courseSchemaRel.schemaId,
-    );
+    const schemaDetails = await Schema.findById(courseSchemaRel.schemaId);
 
     if (!schemaDetails) {
       return res.status(404).json({
@@ -3433,34 +3429,23 @@ const getReviewerBookletTask = async (req, res) => {
 
     let remainingSeconds = 0;
 
-    if (
-      task.status === "paused" &&
-      task.remainingTimeInSec != null
-    ) {
+    if (task.status === "paused" && task.remainingTimeInSec != null) {
       remainingSeconds = task.remainingTimeInSec;
 
       task.lastResumedAt = new Date();
       task.status = "active";
 
       await task.save();
-
-    } else if (
-      task.status === "active" &&
-      task.lastResumedAt
-    ) {
-
+    } else if (task.status === "active" && task.lastResumedAt) {
       const elapsedSeconds = Math.floor(
         (new Date() - task.lastResumedAt) / 1000,
       );
 
       remainingSeconds = Math.max(
-        (task.remainingTimeInSec ?? maxTime * 60) -
-          elapsedSeconds,
+        (task.remainingTimeInSec ?? maxTime * 60) - elapsedSeconds,
         0,
       );
-
     } else {
-
       remainingSeconds = maxTime * 60;
     }
 
@@ -3470,10 +3455,7 @@ const getReviewerBookletTask = async (req, res) => {
 
     const rootFolder = path.join(__dirname, "processedFolder");
 
-    const subjectFolder = path.join(
-      rootFolder,
-      task.subjectCode,
-    );
+    const subjectFolder = path.join(rootFolder, task.subjectCode);
 
     if (!fs.existsSync(subjectFolder)) {
       return res.status(404).json({
@@ -3511,13 +3493,9 @@ const getReviewerBookletTask = async (req, res) => {
       },
     );
 
-    const currentPdf =
-      assignedPdfs[task.currentFileIndex - 1];
+    const currentPdf = assignedPdfs[task.currentFileIndex - 1];
 
-    console.log(
-      "Current pdf for reviewer booklet is this",
-      currentPdf,
-    );
+    console.log("Current pdf for reviewer booklet is this", currentPdf);
 
     if (!currentPdf) {
       return res.status(404).json({
@@ -3525,10 +3503,7 @@ const getReviewerBookletTask = async (req, res) => {
       });
     }
 
-    const pdfPath = path.join(
-      subjectFolder,
-      currentPdf.answerPdfName,
-    );
+    const pdfPath = path.join(subjectFolder, currentPdf.answerPdfName);
 
     if (!fs.existsSync(pdfPath)) {
       return res.status(404).json({
@@ -3536,21 +3511,13 @@ const getReviewerBookletTask = async (req, res) => {
       });
     }
 
-    const bookletName = path.basename(
-      currentPdf.answerPdfName,
-      ".pdf",
-    );
+    const bookletName = path.basename(currentPdf.answerPdfName, ".pdf");
 
-    const currentPdfFolder = path.join(
-      extractedBookletsFolder,
-      bookletName,
-    );
+    const currentPdfFolder = path.join(extractedBookletsFolder, bookletName);
 
-    const extractedBookletPath =
-      `processedFolder/${task.subjectCode}/extractedBooklets/${bookletName}`;
+    const extractedBookletPath = `processedFolder/${task.subjectCode}/extractedBooklets/${bookletName}`;
 
-    const questionImagesFolderUrl =
-      `processedFolder/${task.subjectCode}/bookletWiseExtracted/${bookletName}`;
+    const questionImagesFolderUrl = `processedFolder/${task.subjectCode}/bookletWiseExtracted/${bookletName}`;
 
     /* -------------------------------------------------------------------------- */
     /* 🖼️ FETCH BOOKLET IMAGES                                                    */
@@ -3561,20 +3528,15 @@ const getReviewerBookletTask = async (req, res) => {
     }).sort({ page: 1 });
 
     if (extractedImages.length === 0) {
-
       if (!fs.existsSync(currentPdfFolder)) {
         fs.mkdirSync(currentPdfFolder, {
           recursive: true,
         });
       }
 
-      const imageFiles = await extractImagesFromPdf(
-        pdfPath,
-        currentPdfFolder,
-      );
+      const imageFiles = await extractImagesFromPdf(pdfPath, currentPdfFolder);
 
       const imageDocs = imageFiles.map((img) => {
-
         const match = img.match(/image_(\d+)\.png$/);
 
         const page = parseInt(match[1], 10);
@@ -3587,8 +3549,7 @@ const getReviewerBookletTask = async (req, res) => {
         };
       });
 
-      extractedImages =
-        await BookletAnswerPdfImage.insertMany(imageDocs);
+      extractedImages = await BookletAnswerPdfImage.insertMany(imageDocs);
     }
 
     const bookletImages = extractedImages.map((img) => ({
@@ -3618,13 +3579,8 @@ const getReviewerBookletTask = async (req, res) => {
 
       bookletImages,
     });
-
   } catch (error) {
-
-    console.error(
-      "❌ Error fetching reviewer booklet task:",
-      error,
-    );
+    console.error("❌ Error fetching reviewer booklet task:", error);
 
     return res.status(500).json({
       message: "Failed to process reviewer booklet task",
@@ -4851,9 +4807,11 @@ const getAllTasksBasedOnSubjectCode = async (req, res) => {
     }
 
     const subject = await Subject.findOne({ code: subjectcode });
-    const schemaRelation = await SubjectSchemaRelation.findOne({ subjectId: subject._id });
+    const schemaRelation = await SubjectSchemaRelation.findOne({
+      subjectId: subject._id,
+    });
     // console.log("subject", schemaRelation);
-    const schema = await Schema.findById(schemaRelation.schemaId)
+    const schema = await Schema.findById(schemaRelation.schemaId);
 
     res.status(200).json(schema.numberOfPage);
   } catch (error) {
@@ -5014,6 +4972,9 @@ const reassignBookletsCore = async ({
         String(toUserId),
         String(pdf._id),
       );
+
+      console.log(`📁 Checking for source annotation folder: ${sourceFolder}`);
+      console.log(`📁 Checking for target annotation folder: ${targetFolder}`);
 
       if (fs.existsSync(sourceFolder)) {
         // साफ copy (delete old if exists)
@@ -5426,7 +5387,8 @@ const reassignBookletsCore = async ({
 const completedBookletHandler = async (req, res) => {
   try {
     const { answerpdfid, userId } = req.params;
-    const { submitted } = req.body;
+    const { submitted, hasRemark } = req.body;
+    console.log("submitted", req.body);
 
     console.log("userId", userId);
 
@@ -5789,7 +5751,7 @@ const completedBookletHandler = async (req, res) => {
     }
 
     // ✅ LAST BOOKLET COMPLETED
-    if (task.currentFileIndex === task.totalBooklets) {
+    if (task.currentFileIndex === task.totalBooklets && !hasRemark) {
       task.status = "success";
       await task.save();
 
@@ -5819,6 +5781,11 @@ const completedBookletHandler = async (req, res) => {
           await session.commitTransaction();
 
           console.log("🔥 AUTO REASSIGN SUCCESS");
+          return res.status(200).json({
+            success: true,
+            message: "All booklets completed and sent for review",
+            taskCompleted: true,
+          });
         } catch (err) {
           await session.abortTransaction();
           console.error("❌ Auto reassign failed:", err.message);
@@ -5826,6 +5793,11 @@ const completedBookletHandler = async (req, res) => {
           session.endSession();
         }
       }
+    }
+
+    if (task.currentFileIndex === task.totalBooklets && hasRemark) {
+      task.status = "success";
+      await task.save();
 
       return res.status(200).json({
         success: true,
@@ -6456,12 +6428,8 @@ const assignReviewerRollbackBookletTask = async (req, res) => {
           console.log("🗑️ Reviewer booklet task deleted");
         } else {
           // ✅ Prevent invalid index
-          if (
-            reviewerTask.currentFileIndex >
-            reviewerTask.totalBooklets
-          ) {
-            reviewerTask.currentFileIndex =
-              reviewerTask.totalBooklets;
+          if (reviewerTask.currentFileIndex > reviewerTask.totalBooklets) {
+            reviewerTask.currentFileIndex = reviewerTask.totalBooklets;
           }
 
           // ✅ Prevent zero/negative index
@@ -6478,13 +6446,10 @@ const assignReviewerRollbackBookletTask = async (req, res) => {
         }
 
         totalAssigned += oldBooklets.length;
-      }
-
-      /* ========================================================================== */
-      /* ✅ QUESTION-WISE FLOW */
-      /* ========================================================================== */
-
-      else {
+      } else {
+        /* ========================================================================== */
+        /* ✅ QUESTION-WISE FLOW */
+        /* ========================================================================== */
         const oldAnswerPdfs = await AnswerPdf.find({
           _id: { $in: bookletsToAssign },
           questiondefinitionId,
@@ -6522,9 +6487,7 @@ const assignReviewerRollbackBookletTask = async (req, res) => {
               force: true,
             });
 
-            console.log(
-              `🗑️ Deleted reviewer annotations for ${pdf._id}`,
-            );
+            console.log(`🗑️ Deleted reviewer annotations for ${pdf._id}`);
           }
         }
 
@@ -6575,12 +6538,8 @@ const assignReviewerRollbackBookletTask = async (req, res) => {
             _id: reviewerTask._id,
           }).session(session);
         } else {
-          if (
-            reviewerTask.currentFileIndex >
-            reviewerTask.totalBooklets
-          ) {
-            reviewerTask.currentFileIndex =
-              reviewerTask.totalBooklets;
+          if (reviewerTask.currentFileIndex > reviewerTask.totalBooklets) {
+            reviewerTask.currentFileIndex = reviewerTask.totalBooklets;
           }
 
           if (reviewerTask.currentFileIndex <= 0) {
@@ -6726,7 +6685,7 @@ const assignHeadEvaluatorTask = async (req, res) => {
         console.log("📂 TARGET PATH:", targetPath);
 
         if (!fs.existsSync(basePdfPath)) {
-          console.log("❌ Base path not found, skipping..."); 
+          console.log("❌ Base path not found, skipping...");
           continue;
         }
 

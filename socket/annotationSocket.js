@@ -7,7 +7,7 @@ import Subject from "../models/classModel/subjectModel.js";
 import QuestionDefinition from "../models/schemeModel/questionDefinitionSchema.js";
 import SubjectSchemaRelation from "../models/subjectSchemaRelationModel/subjectSchemaRelationModel.js";
 import AnswerPdfImage from "../models/EvaluationModels/answerPdfImageModel.js";
-
+import User from "../models/authModels/User.js";
 import BookletTask from "../models/taskModels/bookletTaskModel.js";
 import BookletAnswerPdfImage from "../models/EvaluationModels/bookletAnswerPdfImageModel.js";
 
@@ -25,7 +25,7 @@ const baseDataDir = path.join(__dirname, "../Annotations");
 const bookletBaseDataDir = path.join(__dirname, "../BookletAnnotations");
 
 // FIXED: Only use answerPdfId and page
-export function getFilePath(
+export async function getFilePath(
   userId,
   answerPdfId,
   page,
@@ -40,11 +40,14 @@ export function getFilePath(
     evaluatorId,
   });
 
+  const userType = await User.findById(userId).select("role");
+  console.log("User type for getFilePath:", userType?.role);
+
   const rootDir = taskType === "booklet" ? bookletBaseDataDir : baseDataDir;
 
   let pdfDir;
 
-  if (evaluatorId) {
+  if ( userType?.role === "headevaluator") {
     // HEAD EVALUATOR CASE
 
     if (taskType === "booklet") {
@@ -278,11 +281,11 @@ export default function handleAnnotationSocket(io) {
     };
 
     // ✅ Helper functions
-    const loadData = (userId, answerPdfId, page, evaluatorId) => {
+    const loadData = async (userId, answerPdfId, page, evaluatorId) => {
       if (answerPdfId === null || answerPdfId === undefined) {
         return { annotations: [], comments: [] };
       }
-      const filePath = getFilePath(
+      const filePath = await getFilePath(
         userId,
         answerPdfId,
         page,
@@ -437,7 +440,8 @@ export default function handleAnnotationSocket(io) {
           return { annotations: [], comments: [] };
         }
 
-        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
+        const fileData = await loadData(userId, answerPdfId, page, evaluatorId);
+        console.log("Data loaded for page:", userId, answerPdfId, page, evaluatorId);
         console.log("fileData", fileData);
 
         socket.emit("page-data-loaded", fileData);
@@ -474,7 +478,7 @@ export default function handleAnnotationSocket(io) {
           return;
         }
 
-        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
+        const fileData = await loadData(userId, answerPdfId, page, evaluatorId);
         console.log("data loaded");
 
         const annotationObject = {
@@ -584,7 +588,7 @@ export default function handleAnnotationSocket(io) {
           return { annotations: [], comments: [] };
         }
 
-        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
+        const fileData = await loadData(userId, answerPdfId, page, evaluatorId);
         console.log("Data loaded");
 
         const commentObject = {
@@ -682,7 +686,7 @@ export default function handleAnnotationSocket(io) {
           return; // 🔥 Block unsafe folder writes
         }
 
-        const fileData = loadData(actualUserId, answerPdfId, page, evaluatorId);
+        const fileData = await loadData(actualUserId, answerPdfId, page, evaluatorId);
         console.log("dataloaded", fileData);
 
         const idSet = new Set(annotationIds);
@@ -965,7 +969,7 @@ export default function handleAnnotationSocket(io) {
 
         console.log(`🗑️ Deleting comment from task ${taskId}, page ${page}`);
 
-        const fileData = loadData(userId, answerPdfId, page, evaluatorId);
+        const fileData = await loadData(userId, answerPdfId, page, evaluatorId);
         console.log("Data loaded", fileData);
 
         // Ensure comments array exists
@@ -988,7 +992,7 @@ export default function handleAnnotationSocket(io) {
 
         saveData(taskId, userId, answerPdfId, page, fileData, evaluatorId);
 
-        const verifyData = loadData(userId, answerPdfId, page, evaluatorId);
+        const verifyData = await loadData(userId, answerPdfId, page, evaluatorId);
         console.log("AFTER DELETE (FILE):", verifyData.comments);
 
         const roomName =
@@ -1898,7 +1902,7 @@ export default function handleAnnotationSocket(io) {
         // ✅ DIRECTLY READ evaluator data
         const marksFile = loadMarks(userId, evaluatorId, answerPdfId);
         const marksDataFile = loadMarksData(userId, evaluatorId, answerPdfId);
-        const fileData = loadData(userId, evaluatorId, answerPdfId, page);
+        const fileData = await loadData(userId, evaluatorId, answerPdfId, page);
         // console.log('FILEDATAAAAAAAAAA', fileData)
 
         // ✅ SEND only (NO COPYING)
@@ -1943,7 +1947,7 @@ export default function handleAnnotationSocket(io) {
           return; // 🔥 Block unsafe folder writes
         }
 
-        const fileData = loadData(evaluatorId, answerPdfId, page);
+        const fileData = await loadData(evaluatorId, answerPdfId, page);
         console.log("dataloaded", fileData);
 
         const idSet = new Set(annotationIds);
