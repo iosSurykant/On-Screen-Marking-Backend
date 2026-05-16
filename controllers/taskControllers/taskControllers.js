@@ -4973,6 +4973,9 @@ const reassignBookletsCore = async ({
         String(pdf._id),
       );
 
+      console.log(`📁 Checking for source annotation folder: ${sourceFolder}`);
+      console.log(`📁 Checking for target annotation folder: ${targetFolder}`);
+
       if (fs.existsSync(sourceFolder)) {
         // साफ copy (delete old if exists)
         if (fs.existsSync(targetFolder)) {
@@ -5778,6 +5781,11 @@ const completedBookletHandler = async (req, res) => {
           await session.commitTransaction();
 
           console.log("🔥 AUTO REASSIGN SUCCESS");
+          return res.status(200).json({
+            success: true,
+            message: "All booklets completed and sent for review",
+            taskCompleted: true,
+          });
         } catch (err) {
           await session.abortTransaction();
           console.error("❌ Auto reassign failed:", err.message);
@@ -6439,10 +6447,9 @@ const assignReviewerRollbackBookletTask = async (req, res) => {
 
         totalAssigned += oldBooklets.length;
       } else {
-
-      /* ========================================================================== */
-      /* ✅ QUESTION-WISE FLOW */
-      /* ========================================================================== */
+        /* ========================================================================== */
+        /* ✅ QUESTION-WISE FLOW */
+        /* ========================================================================== */
         const oldAnswerPdfs = await AnswerPdf.find({
           _id: { $in: bookletsToAssign },
           questiondefinitionId,
