@@ -1,0 +1,39 @@
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+
+const uploadDir = path.join(process.cwd(), "uploads");
+
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: uploadDir,
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  }
+});
+
+const uploadedMiddleware = multer({
+  storage,
+  limits: {
+    fileSize: 22 * 1024 * 1024 * 1024, // 3 GB
+  },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+
+    if (ext !== ".zip" && ext !== ".pdf") {
+      return cb(
+        new multer.MulterError(
+          "LIMIT_UNEXPECTED_FILE",
+          "Only PDF or ZIP files are allowed"
+        )
+      );
+    }
+
+    cb(null, true);
+  }
+});
+
+export default uploadedMiddleware;
